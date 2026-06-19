@@ -886,8 +886,12 @@
 
     var actions = el("div", { class: "results-actions" }, [dlBtn, toLobby, toBoard]);
 
-    root.appendChild(el("div", { class: "screen" }, [
-      hero, savedWarning, overallPanel, breakdown, actions
+    // Side rail: warning + actions stay reachable while scrolling the breakdown.
+    var rail = el("aside", { class: "results-rail" }, [savedWarning, actions]);
+    var main = el("div", { class: "results-main" }, [hero, overallPanel, breakdown]);
+
+    root.appendChild(el("div", { class: "screen screen--wide" }, [
+      el("div", { class: "results-layout" }, [main, rail])
     ]));
 
     countUp(scoreNum, typeof data.interviewScore === "number" ? data.interviewScore : 0, 1100);
