@@ -38,6 +38,14 @@
       }
       if (finalChunk && typeof opts.onFinal === "function") opts.onFinal(finalChunk);
       if (typeof opts.onInterim === "function") opts.onInterim(interim);
+      // Length governor: let the caller decide whether the answer has hit its cap.
+      // If so, stop appending and shut the recognizer down cleanly.
+      if (typeof opts.atLimit === "function" && opts.atLimit()) {
+        stoppedByUser = true;
+        listening = false;
+        try { rec.stop(); } catch (err) { /* no-op */ }
+        if (typeof opts.onLimit === "function") opts.onLimit();
+      }
     };
 
     rec.onerror = function (e) {

@@ -101,11 +101,12 @@
     });
   }
 
-  function judge(interviewId, questionId, transcript) {
+  function judge(interviewId, questionId, transcript, delivery) {
     return post("/judge", {
       interviewId: interviewId,
       questionId: questionId,
-      transcript: transcript
+      transcript: transcript,
+      delivery: delivery || null
     }).catch(function (e) {
       toast(e.message || "Judging failed. Try resubmitting.");
       throw e;

@@ -14,11 +14,74 @@
     interviewId: null,
     questions: [],
     qIndex: 0,
-    perQuestion: [], // {questionId, score} collected from judge results
+    // Per-question accumulated record across the 10 questions. Keyed by index;
+    // each entry: { questionId, prompt, type, topic, transcript, words, delivery, feedback }
+    perQuestion: [],
+    answers: {},   // questionId -> learner transcript (for results + download)
     ttsOn: true,
     recorder: null,
     recording: false
   };
+
+  // ---- Answer length governor --------------------------------------------
+  var MAX_CHARS = 2000;
+  var SOFT_WORD_LIMIT = 275;
+  var AMBER_WORDS = 245;
+  var TARGET_WORDS = 210;
+
+  function countWords(s) {
+    s = (s || "").trim();
+    if (!s) return 0;
+    return s.split(/\s+/).length;
+  }
+
+  // Conservative filler detection. Word-boundary, case-insensitive.
+  // Single tokens + a few multi-word fillers. "like" only when space-bounded.
+  var FILLER_SINGLE = ["um", "uh", "uhh", "er", "erm", "ah", "like"];
+  var FILLER_PHRASES = ["you know", "kind of", "sort of", "i mean"];
+  function countFillers(s) {
+    s = " " + (s || "").toLowerCase() + " ";
+    var n = 0;
+    FILLER_SINGLE.forEach(function (w) {
+      var re = new RegExp("(^|[^a-z])" + w + "([^a-z]|$)", "g");
+      var m;
+      // count non-overlapping by walking lastIndex back one (boundaries shared)
+      var idx = 0;
+      while ((m = re.exec(s)) !== null) {
+        n++;
+        re.lastIndex = m.index + 1;
+      }
+      void idx;
+    });
+    FILLER_PHRASES.forEach(function (p) {
+      var re = new RegExp("(^|[^a-z])" + p.replace(/ /g, "\\s+") + "([^a-z]|$)", "g");
+      var m;
+      while ((m = re.exec(s)) !== null) {
+        n++;
+        re.lastIndex = m.index + 1;
+      }
+    });
+    return n;
+  }
+
+  // Build the delivery object sent to /judge.
+  // mode "speech" if they recorded this answer at all; durationMs null if typed-only.
+  function buildDelivery(transcript, startMs, stopMs, recorded) {
+    var words = countWords(transcript);
+    var durationMs = (recorded && startMs && stopMs && stopMs > startMs) ? (stopMs - startMs) : null;
+    var mode = recorded ? "speech" : "typed";
+    var wpm = (durationMs && mode === "speech") ? Math.round(words / (durationMs / 60000)) : null;
+    var fillerCount = countFillers(transcript);
+    var fillerRate = Math.round(fillerCount / Math.max(words, 1) * 100);
+    return {
+      durationMs: durationMs,
+      words: words,
+      wpm: wpm,
+      fillerCount: fillerCount,
+      fillerRate: fillerRate,
+      mode: mode
+    };
+  }
 
   // ---- DOM helpers --------------------------------------------------------
   function $(sel, root) {
@@ -281,6 +344,7 @@
           state.questions = data.questions || [];
           state.qIndex = 0;
           state.perQuestion = [];
+          state.answers = {};
           renderQuestion();
         } else {
           if (btn) { btn.disabled = false; btn.textContent = "Start Interview"; }
@@ -335,15 +399,46 @@
 
     var prompt = el("h2", { class: "q-prompt", text: q.prompt });
 
+    var guidance = el("p", {
+      class: "answer-guidance",
+      text: "Aim for ~90 seconds (~210 words). Keep it concise — limit ~275 words."
+    });
+
     // ---- Transcript box (always present; STT feeds it) ----
     var ta = el("textarea", {
       class: "transcript",
       id: "transcriptBox",
       rows: "6",
+      maxlength: String(MAX_CHARS),
       placeholder: window.STT.supported()
         ? "Hit Record and start talking — your words appear here. Edit freely."
         : "Type your answer here…"
     });
+
+    // ---- Live word counter + over-limit nudge ----
+    var counter = el("span", { class: "wordcount", text: "0 / " + SOFT_WORD_LIMIT + " words" });
+    var nudge = el("p", { class: "len-nudge", text: "A bit long — interviewers tune out after ~90s. Trim if you can." });
+    nudge.style.display = "none";
+    var limitNote = el("p", { class: "len-limit", text: "Length limit reached — wrap up your answer." });
+    limitNote.style.display = "none";
+
+    function atCharLimit() { return (ta.value || "").length >= MAX_CHARS; }
+    function atWordLimit() { return countWords(ta.value) >= SOFT_WORD_LIMIT; }
+    function atAnyLimit() { return atCharLimit() || atWordLimit(); }
+
+    function updateCounter() {
+      var w = countWords(ta.value);
+      counter.textContent = w + " / " + SOFT_WORD_LIMIT + " words";
+      counter.classList.remove("is-amber", "is-red");
+      if (w > SOFT_WORD_LIMIT) counter.classList.add("is-red");
+      else if (w > AMBER_WORDS) counter.classList.add("is-amber");
+      nudge.style.display = w > SOFT_WORD_LIMIT ? "" : "none";
+    }
+
+    // ---- Delivery timing / mode tracking for this answer ----
+    var recordStartMs = null; // first time recording started this answer
+    var recordStopMs = null;  // last time recording stopped
+    var recordedThisAnswer = false;
 
     var finalSoFar = ""; // committed transcript text
     function composed(interim) {
@@ -364,17 +459,27 @@
       ]);
 
       state.recorder = window.STT.createRecorder({
+        atLimit: atAnyLimit,
+        onLimit: function () {
+          recordStopMs = Date.now();
+          limitNote.style.display = "";
+        },
         onStart: function () {
           state.recording = true;
           recBtn.classList.add("is-recording");
           $(".rec-label", recBtn).textContent = "Stop";
         },
         onInterim: function (interim) {
+          if (atAnyLimit()) return; // stop appending once capped
           ta.value = composed(interim);
+          updateCounter();
         },
         onFinal: function (chunk) {
+          if (atAnyLimit()) { updateCounter(); return; }
           finalSoFar = (finalSoFar + " " + chunk).trim();
+          if (finalSoFar.length > MAX_CHARS) finalSoFar = finalSoFar.slice(0, MAX_CHARS);
           ta.value = finalSoFar;
+          updateCounter();
         },
         onError: function (e) {
           var code = e && e.error;
@@ -388,6 +493,7 @@
         },
         onEnd: function () {
           state.recording = false;
+          if (recordStartMs && !atAnyLimit()) recordStopMs = Date.now();
           recBtn.classList.remove("is-recording");
           $(".rec-label", recBtn).textContent = finalSoFar ? "Resume" : "Record";
         }
@@ -396,15 +502,23 @@
       // If the user edits the textarea manually, treat it as the new committed base.
       ta.addEventListener("input", function () {
         if (!state.recording) finalSoFar = ta.value;
+        updateCounter();
       });
 
       recBtn.addEventListener("click", function () {
         if (!state.recorder) return;
         if (state.recorder.isListening()) {
           state.recorder.stop();
+          recordStopMs = Date.now();
         } else {
+          if (atAnyLimit()) {
+            limitNote.style.display = "";
+            return;
+          }
           // sync base with any manual edits before resuming
           finalSoFar = ta.value;
+          recordedThisAnswer = true;
+          if (recordStartMs == null) recordStartMs = Date.now();
           state.recorder.start();
         }
       });
@@ -416,11 +530,19 @@
         class: "no-stt",
         text: "Speech not supported in this browser — type your answer (Chrome / Edge recommended)."
       }));
+      ta.addEventListener("input", updateCounter);
     }
 
     var submitBtn = el("button", { class: "btn btn--primary", id: "submitBtn", type: "button" }, ["Submit Answer"]);
     submitBtn.addEventListener("click", function () {
-      submitAnswer(q, ta.value, submitBtn);
+      if (state.recording && state.recorder) {
+        try { state.recorder.stop(); } catch (e) { /* no-op */ }
+        recordStopMs = Date.now();
+      } else if (recordStartMs && recordStopMs == null) {
+        recordStopMs = Date.now();
+      }
+      var delivery = buildDelivery(ta.value, recordStartMs, recordStopMs, recordedThisAnswer);
+      submitAnswer(q, ta.value, submitBtn, delivery);
     });
 
     var feedbackMount = el("div", { id: "feedbackMount" });
@@ -429,9 +551,12 @@
       progress,
       meta,
       prompt,
+      guidance,
       el("div", { class: "answer-block" }, [
         el("label", { class: "field-label", text: "Your answer" }),
         ta,
+        el("div", { class: "answer-foot" }, [counter, limitNote]),
+        nudge,
         controls
       ]),
       el("div", { class: "q-actions" }, [submitBtn]),
@@ -446,7 +571,7 @@
     }
   }
 
-  function submitAnswer(q, transcript, btn) {
+  function submitAnswer(q, transcript, btn, delivery) {
     transcript = (transcript || "").trim();
     if (!transcript) {
       window.showToast("Say or type something before submitting.", "warn");
@@ -461,10 +586,24 @@
     btn.textContent = "Judging…";
     btn.classList.add("is-loading");
 
-    window.API.judge(state.interviewId, q.id, transcript)
+    // Keep the learner's own transcript client-side (the API doesn't echo it back).
+    state.answers[q.id] = transcript;
+
+    window.API.judge(state.interviewId, q.id, transcript, delivery)
       .then(function (data) {
         if (data && data.ok) {
-          state.perQuestion.push({ questionId: q.id, score: data.score });
+          state.perQuestion.push({
+            questionId: q.id,
+            idx: state.qIndex,
+            prompt: q.prompt,
+            type: q.type || null,
+            topic: q.topic || null,
+            score: data.score,
+            transcript: transcript,
+            words: (delivery && delivery.words) || countWords(transcript),
+            delivery: data.delivery || null,
+            feedback: data
+          });
           renderFeedback(data);
         } else {
           btn.disabled = false;
@@ -527,6 +666,14 @@
       ]);
     }
 
+    var deliveryLine = data.delivery
+      ? el("div", { class: "fb-delivery" }, [
+          el("span", { class: "fb-delivery__icon", text: "🎙" }),
+          el("span", { class: "fb-delivery__label", text: "Delivery" }),
+          el("span", { class: "fb-delivery__text", text: String(data.delivery) })
+        ])
+      : null;
+
     var model = null;
     if (data.modelAnswer) {
       var details = el("details", { class: "model-answer" });
@@ -552,6 +699,7 @@
         bulletList("Strengths", data.strengths, "is-good"),
         bulletList("Improve", data.improvements, "is-warn")
       ]),
+      deliveryLine,
       model,
       el("div", { class: "fb-actions" }, [nextBtn])
     ]);
@@ -594,7 +742,7 @@
     var root = app();
     clear(root);
     root.appendChild(el("div", { class: "screen screen--center" }, [
-      el("div", { class: "card screen-in", text: "Tallying your interview…" })
+      el("div", { class: "card screen-in", text: "Summarizing…" })
     ]));
 
     window.API.finishInterview(state.interviewId)
@@ -605,41 +753,74 @@
       .catch(function () { renderLobby(); });
   }
 
+  // Merge the API perQuestion (source of truth for scores/feedback) with the
+  // client-side transcripts/delivery we accumulated, keyed by questionId.
+  function mergedPerQuestion(data) {
+    var apiPq = (data && data.perQuestion) || [];
+    var localById = {};
+    (state.perQuestion || []).forEach(function (r) { localById[r.questionId] = r; });
+
+    if (apiPq.length) {
+      return apiPq.map(function (item, i) {
+        var local = localById[item.questionId] || {};
+        return {
+          questionId: item.questionId,
+          idx: typeof item.idx === "number" ? item.idx : i,
+          prompt: item.prompt || local.prompt || "",
+          type: item.type || local.type || null,
+          topic: item.topic || local.topic || null,
+          score: typeof item.score === "number" ? item.score : (local.score || 0),
+          strengths: item.strengths || (local.feedback && local.feedback.strengths) || [],
+          improvements: item.improvements || (local.feedback && local.feedback.improvements) || [],
+          delivery: item.delivery || (local.feedback && local.feedback.delivery) || null,
+          answer: state.answers[item.questionId] || local.transcript || ""
+        };
+      });
+    }
+    // Fall back to purely client-side records.
+    return (state.perQuestion || []).map(function (r, i) {
+      return {
+        questionId: r.questionId,
+        idx: typeof r.idx === "number" ? r.idx : i,
+        prompt: r.prompt || "",
+        type: r.type || null,
+        topic: r.topic || null,
+        score: r.score || 0,
+        strengths: (r.feedback && r.feedback.strengths) || [],
+        improvements: (r.feedback && r.feedback.improvements) || [],
+        delivery: (r.feedback && r.feedback.delivery) || null,
+        answer: state.answers[r.questionId] || r.transcript || ""
+      };
+    });
+  }
+
+  function bulletBlock(title, items, cls) {
+    if (!items || !items.length) return null;
+    return el("div", { class: "ov-block" }, [
+      el("h4", { class: "ov-h " + (cls || ""), text: title }),
+      el("ul", { class: "fb-list" }, items.map(function (it) { return el("li", { text: String(it) }); }))
+    ]);
+  }
+
   function renderResults(data) {
     var root = app();
     clear(root);
 
+    var pq = mergedPerQuestion(data);
+
+    // ---- Hero: big score + badge + rank ----
     var scoreNum = el("span", { class: "score-num score-num--xl", text: "0" });
-
-    var pq = data.perQuestion || state.perQuestion || [];
-    var spark = el("div", { class: "spark" });
-    pq.forEach(function (item, i) {
-      var v = typeof item.score === "number" ? item.score : 0;
-      var col = el("div", { class: "spark__col", title: "Q" + (i + 1) + ": " + v }, [
-        el("div", { class: "spark__bar", "data-v": String(v), style: "height:0%" }),
-        el("span", { class: "spark__q", text: String(i + 1) })
-      ]);
-      spark.appendChild(col);
-    });
-
     var badge = data.personalBestToday
       ? el("div", { class: "best-badge", text: "⭐ Personal best today!" })
       : null;
-
     var rank = typeof data.rankToday === "number"
       ? el("p", { class: "rank-line" }, ["Today's rank: ", el("strong", { text: "#" + data.rankToday })])
       : null;
-
     var practiceNote = isPractice()
       ? el("p", { class: "mic-note", text: "Practice mode — this run isn't posted to the leaderboard." })
       : null;
 
-    var toLobby = el("button", { class: "btn", type: "button", text: "Back to Lobby" });
-    toLobby.addEventListener("click", refreshSessionThenLobby);
-    var toBoard = el("button", { class: "btn btn--primary", type: "button", text: "View Leaderboard" });
-    toBoard.addEventListener("click", function () { renderLeaderboard("results"); });
-
-    var card = el("div", { class: "card results-card screen-in" }, [
+    var hero = el("div", { class: "card results-card screen-in" }, [
       el("h1", { class: "results-title", text: "Interview complete" }),
       el("div", { class: "results-score" }, [
         scoreNum,
@@ -647,22 +828,172 @@
       ]),
       badge,
       rank,
-      el("h3", { class: "spark-title", text: "Per-question" }),
-      spark,
-      practiceNote,
-      el("div", { class: "results-actions" }, [toLobby, toBoard])
+      practiceNote
     ]);
 
-    root.appendChild(el("div", { class: "screen screen--center" }, [card]));
+    // ---- Overall Feedback panel ----
+    var ov = data.overall || {};
+    var overallChildren = [el("h2", { class: "panel-title", text: "Overall Feedback" })];
+    if (ov.summary) overallChildren.push(el("p", { class: "ov-summary", text: String(ov.summary) }));
+    var topStrengths = bulletBlock("Top strengths", ov.topStrengths, "is-good");
+    var focusAreas = bulletBlock("Focus areas", ov.focusAreas, "is-warn");
+    if (topStrengths) overallChildren.push(topStrengths);
+    if (focusAreas) overallChildren.push(focusAreas);
+    if (ov.softSkills) {
+      overallChildren.push(el("div", { class: "ov-soft" }, [
+        el("h4", { class: "ov-h" }, [el("span", { class: "fb-delivery__icon", text: "🎙" }), " Delivery / Soft skills"]),
+        el("p", { class: "ov-soft__text", text: String(ov.softSkills) })
+      ]));
+    }
+    var overallPanel = (overallChildren.length > 1)
+      ? el("div", { class: "card overall-panel" }, overallChildren)
+      : null;
+
+    // ---- Per-question breakdown ----
+    var breakdownCards = pq.map(function (item, i) {
+      var n = (typeof item.idx === "number" ? item.idx : i) + 1;
+      var v = typeof item.score === "number" ? item.score : 0;
+
+      var qDetails = el("details", { class: "pq-collapsible" });
+      qDetails.appendChild(el("summary", { text: "Q" + n + " — question text" }));
+      qDetails.appendChild(el("p", { class: "pq-prompt", text: item.prompt || "(question unavailable)" }));
+
+      var ansDetails = el("details", { class: "pq-collapsible" });
+      ansDetails.appendChild(el("summary", { text: "Your answer" }));
+      ansDetails.appendChild(el("p", { class: "pq-answer", text: item.answer || "(no answer captured)" }));
+
+      var strengths = bulletBlock("Strengths", item.strengths, "is-good");
+      var improvements = bulletBlock("Improve", item.improvements, "is-warn");
+
+      var deliveryLine = item.delivery
+        ? el("div", { class: "fb-delivery" }, [
+            el("span", { class: "fb-delivery__icon", text: "🎙" }),
+            el("span", { class: "fb-delivery__label", text: "Delivery" }),
+            el("span", { class: "fb-delivery__text", text: String(item.delivery) })
+          ])
+        : null;
+
+      return el("div", { class: "pq-card" }, [
+        el("div", { class: "pq-head" }, [
+          el("span", { class: "pq-ring", text: String(v) }),
+          el("div", { class: "pq-head__meta" }, [
+            el("span", { class: "pq-n", text: "Question " + n }),
+            item.topic ? el("span", { class: "chip", text: item.topic }) : null
+          ])
+        ]),
+        qDetails,
+        ansDetails,
+        el("div", { class: "pq-fb" }, [strengths, improvements]),
+        deliveryLine
+      ]);
+    });
+
+    var breakdown = breakdownCards.length
+      ? el("div", { class: "card breakdown-panel" }, [
+          el("h2", { class: "panel-title", text: "Per-question breakdown" })
+        ].concat(breakdownCards))
+      : null;
+
+    // ---- Actions: Download / Lobby / Leaderboard ----
+    var dlBtn = el("button", { class: "btn btn--primary", type: "button", text: "⬇ Download Feedback" });
+    dlBtn.addEventListener("click", function () { downloadReport(data, pq); });
+    var toLobby = el("button", { class: "btn", type: "button", text: "Back to Lobby" });
+    toLobby.addEventListener("click", refreshSessionThenLobby);
+    var toBoard = el("button", { class: "btn btn--primary", type: "button", text: "View Leaderboard" });
+    toBoard.addEventListener("click", function () { renderLeaderboard("results"); });
+
+    var actions = el("div", { class: "results-actions" }, [dlBtn, toLobby, toBoard]);
+
+    root.appendChild(el("div", { class: "screen" }, [
+      hero, overallPanel, breakdown, actions
+    ]));
 
     countUp(scoreNum, typeof data.interviewScore === "number" ? data.interviewScore : 0, 1100);
-    setTimeout(function () {
-      var bars = card.querySelectorAll(".spark__bar");
-      Array.prototype.forEach.call(bars, function (b) {
-        var v = parseInt(b.getAttribute("data-v"), 10) || 0;
-        b.style.height = Math.max(4, Math.min(100, v)) + "%";
-      });
-    }, 150);
+  }
+
+  // ---- Markdown report + download ----------------------------------------
+  function downloadReport(data, pq) {
+    var name = state.name || "Practice";
+    var d = new Date();
+    var pad = function (x) { return String(x).padStart(2, "0"); };
+    var dateStr = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+
+    var ov = data.overall || {};
+    var lines = [];
+    lines.push("# FDE Interview Gauntlet — Feedback");
+    lines.push("");
+    lines.push("- Name: " + name);
+    lines.push("- Date: " + dateStr);
+    lines.push("- Interview score: " + (typeof data.interviewScore === "number" ? data.interviewScore : "—") + " / 100");
+    if (typeof data.rankToday === "number") lines.push("- Today's rank: #" + data.rankToday);
+    if (data.personalBestToday) lines.push("- Personal best today: yes");
+    lines.push("");
+    lines.push("## Overall Feedback");
+    lines.push("");
+    if (ov.summary) { lines.push(ov.summary); lines.push(""); }
+    if (ov.topStrengths && ov.topStrengths.length) {
+      lines.push("### Top strengths");
+      ov.topStrengths.forEach(function (s) { lines.push("- " + s); });
+      lines.push("");
+    }
+    if (ov.focusAreas && ov.focusAreas.length) {
+      lines.push("### Focus areas");
+      ov.focusAreas.forEach(function (s) { lines.push("- " + s); });
+      lines.push("");
+    }
+    if (ov.softSkills) {
+      lines.push("### Delivery / Soft skills");
+      lines.push(ov.softSkills);
+      lines.push("");
+    }
+
+    lines.push("## Per-question breakdown");
+    lines.push("");
+    (pq || []).forEach(function (item, i) {
+      var n = (typeof item.idx === "number" ? item.idx : i) + 1;
+      lines.push("### Q" + n + (item.topic ? " — " + item.topic : ""));
+      lines.push("");
+      lines.push("**Question:** " + (item.prompt || "(unavailable)"));
+      lines.push("");
+      lines.push("**Your answer:**");
+      lines.push("");
+      lines.push("> " + String(item.answer || "(no answer captured)").replace(/\n/g, "\n> "));
+      lines.push("");
+      lines.push("**Score:** " + (typeof item.score === "number" ? item.score : "—") + " / 100");
+      lines.push("");
+      if (item.strengths && item.strengths.length) {
+        lines.push("**Strengths:**");
+        item.strengths.forEach(function (s) { lines.push("- " + s); });
+        lines.push("");
+      }
+      if (item.improvements && item.improvements.length) {
+        lines.push("**Improvements:**");
+        item.improvements.forEach(function (s) { lines.push("- " + s); });
+        lines.push("");
+      }
+      if (item.delivery) {
+        lines.push("**Delivery:** " + item.delivery);
+        lines.push("");
+      }
+    });
+
+    var md = lines.join("\n");
+    var safeName = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "practice";
+    var filename = "fde-interview-" + safeName + "-" + dateStr + ".md";
+
+    try {
+      var blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var a = el("a", { href: url, download: filename });
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 0);
+    } catch (e) {
+      window.showToast("Could not generate the download.", "error");
+    }
   }
 
   function refreshSessionThenLobby() {
