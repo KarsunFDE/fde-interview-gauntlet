@@ -297,8 +297,8 @@
       el("ol", { class: "how-list" }, [
         el("li", { text: "10 questions, one interview. Each is read aloud." }),
         el("li", { text: "Speak your answer — it transcribes live. Fix typos in the box if needed." }),
-        el("li", { text: "Submit and an AI judge scores you /100 across 5 dimensions with feedback." }),
-        el("li", { text: "Finish all 10 to post your best score to today's leaderboard." })
+        el("li", { text: "Submit each answer — it's scored privately. No feedback shown mid-interview." }),
+        el("li", { text: "After all 10, you'll see your full score + feedback. Finish to post your best to today's leaderboard." })
       ])
     ]);
 
@@ -545,6 +545,19 @@
       submitAnswer(q, ta.value, submitBtn, delivery);
     });
 
+    var qActions = el("div", { class: "q-actions" }, [submitBtn]);
+
+    // Practice-only: "Skip to results" ends the interview immediately.
+    if (isPractice()) {
+      var skipBtn = el("button", { class: "btn btn--ghost skip-results", type: "button" }, ["Skip to results →"]);
+      skipBtn.addEventListener("click", function () {
+        stopRecorder();
+        window.STT.tts.cancel();
+        finishInterview();
+      });
+      qActions.appendChild(skipBtn);
+    }
+
     var feedbackMount = el("div", { id: "feedbackMount" });
 
     var card = el("div", { class: "card q-card screen-in" }, [
@@ -559,7 +572,7 @@
         nudge,
         controls
       ]),
-      el("div", { class: "q-actions" }, [submitBtn]),
+      qActions,
       feedbackMount
     ]);
 
@@ -583,15 +596,29 @@
     stopRecorder();
     window.STT.tts.cancel();
     btn.disabled = true;
-    btn.textContent = "Judging…";
+    btn.textContent = "Saving…";
     btn.classList.add("is-loading");
+
+    // Inline "saving" state so the user knows the answer is being recorded.
+    var mount = $("#feedbackMount");
+    if (mount) {
+      clear(mount);
+      mount.appendChild(el("div", { class: "save-state save-state--pending" }, [
+        el("span", { class: "save-spinner" }),
+        el("span", { text: "Recording your answer…" })
+      ]));
+    }
 
     // Keep the learner's own transcript client-side (the API doesn't echo it back).
     state.answers[q.id] = transcript;
 
+    var lastQuestion = state.qIndex + 1 >= state.questions.length;
+
     window.API.judge(state.interviewId, q.id, transcript, delivery)
       .then(function (data) {
         if (data && data.ok) {
+          // Accumulate full per-question record (scores + feedback) for the END
+          // results + PDF. NEVER render the feedback card mid-interview.
           state.perQuestion.push({
             questionId: q.id,
             idx: state.qIndex,
@@ -604,119 +631,65 @@
             delivery: data.delivery || null,
             feedback: data
           });
-          renderFeedback(data);
+          confirmSavedAndAdvance(mount, lastQuestion);
         } else {
           btn.disabled = false;
           btn.textContent = "Submit Answer";
           btn.classList.remove("is-loading");
-          window.showToast("Judge could not score that answer.", "error");
+          if (mount) clear(mount);
+          window.showToast("Couldn't save that answer — try Submit again.", "error");
         }
       })
       .catch(function () {
         btn.disabled = false;
         btn.textContent = "Submit Answer";
         btn.classList.remove("is-loading");
+        if (mount) clear(mount);
+        window.showToast("Couldn't save that answer — try Submit again.", "error");
       });
   }
 
-  var DIM_LABELS = {
-    structure: "Structure",
-    mindset: "Mindset",
-    technical: "Technical",
-    communication: "Communication",
-    specificity: "Specificity"
-  };
-
-  function renderFeedback(data) {
-    var mount = $("#feedbackMount");
-    if (!mount) return;
-    clear(mount);
-
-    // hide submit / record after scoring
+  // Show a brief "answer recorded" confirmation, then advance to the next
+  // question (or finish). No scores/feedback shown until the results screen.
+  function confirmSavedAndAdvance(mount, lastQuestion) {
+    // Hide the answer controls so the user can't double-submit during the beat.
     var actions = $(".q-actions");
     if (actions) actions.style.display = "none";
-    var ans = $(".answer-block .rec-controls");
-    if (ans) ans.style.display = "none";
+    var recCtl = $(".answer-block .rec-controls");
+    if (recCtl) recCtl.style.display = "none";
 
-    var scoreNum = el("span", { class: "score-num", text: "0" });
-    var ring = el("div", { class: "score-ring" }, [
-      scoreNum,
-      el("span", { class: "score-den", text: "/100" })
-    ]);
-
-    var dims = el("div", { class: "dims" });
-    var d = data.dims || {};
-    Object.keys(DIM_LABELS).forEach(function (k) {
-      var v = typeof d[k] === "number" ? d[k] : 0;
-      var row = el("div", { class: "dim-row" }, [
-        el("span", { class: "dim-label", text: DIM_LABELS[k] }),
-        el("div", { class: "bar bar--sm" }, [
-          el("div", { class: "bar__fill dim-fill", "data-v": String(v), style: "width:0%" })
-        ]),
-        el("span", { class: "dim-val", text: String(v) })
-      ]);
-      dims.appendChild(row);
-    });
-
-    function bulletList(title, items, cls) {
-      if (!items || !items.length) return null;
-      return el("div", { class: "fb-col" }, [
-        el("h4", { class: "fb-h " + cls, text: title }),
-        el("ul", { class: "fb-list" }, items.map(function (it) { return el("li", { text: String(it) }); }))
-      ]);
-    }
-
-    var deliveryLine = data.delivery
-      ? el("div", { class: "fb-delivery" }, [
-          el("span", { class: "fb-delivery__icon", text: "🎙" }),
-          el("span", { class: "fb-delivery__label", text: "Delivery" }),
-          el("span", { class: "fb-delivery__text", text: String(data.delivery) })
-        ])
-      : null;
-
-    var model = null;
-    if (data.modelAnswer) {
-      var details = el("details", { class: "model-answer" });
-      details.appendChild(el("summary", { text: "What a strong answer hits" }));
-      details.appendChild(el("p", { class: "model-body", text: String(data.modelAnswer) }));
-      model = details;
-    }
-
-    var nextLabel = state.qIndex + 1 >= state.questions.length ? "See Results" : "Next Question";
-    var nextBtn = el("button", { class: "btn btn--primary", type: "button" }, [nextLabel]);
-    nextBtn.addEventListener("click", function () {
+    function advance() {
       state.qIndex++;
       if (state.qIndex >= state.questions.length) finishInterview();
       else renderQuestion();
-    });
+    }
 
-    var card = el("div", { class: "feedback-card reveal-in" }, [
-      el("div", { class: "fb-top" }, [
-        ring,
-        el("div", { class: "fb-dims-wrap" }, [dims])
-      ]),
-      el("div", { class: "fb-cols" }, [
-        bulletList("Strengths", data.strengths, "is-good"),
-        bulletList("Improve", data.improvements, "is-warn")
-      ]),
-      deliveryLine,
-      model,
-      el("div", { class: "fb-actions" }, [nextBtn])
-    ]);
+    if (mount) {
+      clear(mount);
+      var nextBtn = el("button", { class: "btn btn--primary", type: "button" }, [
+        lastQuestion ? "Finish interview →" : "Next question →"
+      ]);
+      nextBtn.addEventListener("click", advance);
+      mount.appendChild(el("div", { class: "save-state save-state--ok reveal-in" }, [
+        el("div", { class: "save-confirm" }, [
+          el("span", { class: "save-check", text: "✓" }),
+          el("span", { text: "Answer recorded — scoring saved." })
+        ]),
+        el("div", { class: "save-actions" }, [nextBtn])
+      ]));
+      mount.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
 
-    mount.appendChild(card);
-    card.scrollIntoView({ behavior: "smooth", block: "start" });
-
-    // animations: count-up + bar fills
-    countUp(scoreNum, typeof data.score === "number" ? data.score : 0, 900);
+    // Auto-advance after a short beat so it stays snappy; the button is a
+    // manual fallback if the user clicks first.
     setTimeout(function () {
-      var fills = mount.querySelectorAll(".dim-fill");
-      Array.prototype.forEach.call(fills, function (f) {
-        var v = parseInt(f.getAttribute("data-v"), 10) || 0;
-        f.style.width = Math.max(0, Math.min(100, v)) + "%";
-      });
-    }, 120);
+      // Guard: only auto-advance if we're still on the same question DOM.
+      if (mount && mount.parentNode && mount.querySelector(".save-state--ok")) advance();
+    }, 1100);
   }
+
+  // NOTE: mid-interview feedback rendering was removed by design — feedback now
+  // appears ONLY on the results screen after /interview/finish.
 
   function countUp(node, target, dur) {
     target = Math.max(0, Math.round(target));
@@ -894,8 +867,17 @@
         ].concat(breakdownCards))
       : null;
 
+    // ---- "Not saved" warning banner (must sit above Download) ----
+    var savedWarning = el("div", { class: "not-saved-banner" }, [
+      el("span", { class: "not-saved-banner__icon", text: "⚠️" }),
+      el("div", { class: "not-saved-banner__body" }, [
+        el("strong", { text: "Your feedback isn't saved anywhere." }),
+        " Download it now (below) — once you leave this page it's gone."
+      ])
+    ]);
+
     // ---- Actions: Download / Lobby / Leaderboard ----
-    var dlBtn = el("button", { class: "btn btn--primary", type: "button", text: "⬇ Download Feedback" });
+    var dlBtn = el("button", { class: "btn btn--primary", type: "button", text: "⬇ Download PDF" });
     dlBtn.addEventListener("click", function () { downloadReport(data, pq); });
     var toLobby = el("button", { class: "btn", type: "button", text: "Back to Lobby" });
     toLobby.addEventListener("click", refreshSessionThenLobby);
@@ -905,92 +887,139 @@
     var actions = el("div", { class: "results-actions" }, [dlBtn, toLobby, toBoard]);
 
     root.appendChild(el("div", { class: "screen" }, [
-      hero, overallPanel, breakdown, actions
+      hero, savedWarning, overallPanel, breakdown, actions
     ]));
 
     countUp(scoreNum, typeof data.interviewScore === "number" ? data.interviewScore : 0, 1100);
   }
 
-  // ---- Markdown report + download ----------------------------------------
+  // ---- PDF report (via browser print engine) ------------------------------
+  // Builds a clean, self-contained printable HTML report and opens it in a new
+  // tab, then calls print() so the user can "Save as PDF". Popup-blocked? Falls
+  // back to a downloadable .html the user can open + print.
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function buildReportHtml(data, pq, name, dateStr) {
+    var ov = data.overall || {};
+    var title = "FDE Interview — " + name + " — " + dateStr;
+
+    function list(items) {
+      if (!items || !items.length) return "";
+      return "<ul>" + items.map(function (it) { return "<li>" + esc(it) + "</li>"; }).join("") + "</ul>";
+    }
+
+    var metaBits = [];
+    metaBits.push("<span><strong>Name:</strong> " + esc(name) + "</span>");
+    metaBits.push("<span><strong>Date:</strong> " + esc(dateStr) + "</span>");
+    metaBits.push("<span><strong>Score:</strong> " +
+      (typeof data.interviewScore === "number" ? data.interviewScore : "—") + " / 100</span>");
+    if (typeof data.rankToday === "number") metaBits.push("<span><strong>Today's rank:</strong> #" + data.rankToday + "</span>");
+    if (data.personalBestToday) metaBits.push("<span><strong>★ Personal best today</strong></span>");
+
+    var overallHtml = "";
+    if (ov.summary || (ov.topStrengths && ov.topStrengths.length) || (ov.focusAreas && ov.focusAreas.length) || ov.softSkills) {
+      overallHtml += "<section class='block'><h2>Overall Feedback</h2>";
+      if (ov.summary) overallHtml += "<p class='summary'>" + esc(ov.summary) + "</p>";
+      if (ov.topStrengths && ov.topStrengths.length) overallHtml += "<h3 class='good'>Top strengths</h3>" + list(ov.topStrengths);
+      if (ov.focusAreas && ov.focusAreas.length) overallHtml += "<h3 class='warn'>Focus areas</h3>" + list(ov.focusAreas);
+      if (ov.softSkills) overallHtml += "<h3>Delivery / Soft skills</h3><p>" + esc(ov.softSkills) + "</p>";
+      overallHtml += "</section>";
+    }
+
+    var qHtml = (pq || []).map(function (item, i) {
+      var n = (typeof item.idx === "number" ? item.idx : i) + 1;
+      var score = typeof item.score === "number" ? item.score : "—";
+      var s = "<section class='q'>";
+      s += "<div class='q-head'><span class='q-score'>" + esc(score) + "</span>";
+      s += "<h3>Question " + n + (item.topic ? " <span class='topic'>" + esc(item.topic) + "</span>" : "") + "</h3></div>";
+      s += "<p class='qtext'>" + esc(item.prompt || "(question unavailable)") + "</p>";
+      s += "<blockquote>" + esc(item.answer || "(no answer captured)") + "</blockquote>";
+      if (item.strengths && item.strengths.length) s += "<h4 class='good'>Strengths</h4>" + list(item.strengths);
+      if (item.improvements && item.improvements.length) s += "<h4 class='warn'>Improvements</h4>" + list(item.improvements);
+      if (item.delivery) s += "<p class='delivery'><strong>Delivery:</strong> " + esc(item.delivery) + "</p>";
+      s += "</section>";
+      return s;
+    }).join("");
+
+    var css =
+      "*{box-sizing:border-box}" +
+      "body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1a1f2e;background:#fff;margin:0;padding:32px;line-height:1.55;}" +
+      ".report{max-width:760px;margin:0 auto;}" +
+      "h1{font-size:1.6rem;margin:0 0 4px;letter-spacing:-.01em;}" +
+      ".brandline{color:#0d9488;font-weight:700;font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;margin:0 0 10px;}" +
+      ".meta{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:.92rem;color:#374151;border-bottom:2px solid #e5e7eb;padding-bottom:14px;margin-bottom:20px;}" +
+      "h2{font-size:1.2rem;margin:24px 0 8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;}" +
+      "h3{font-size:1rem;margin:14px 0 4px;}h4{font-size:.9rem;margin:10px 0 4px;}" +
+      ".good{color:#15803d;}.warn{color:#b45309;}" +
+      "ul{margin:4px 0 8px;padding-left:20px;}li{margin:2px 0;}" +
+      ".summary{font-size:1rem;}" +
+      ".block{page-break-inside:avoid;}" +
+      ".q{border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;margin:14px 0;page-break-inside:avoid;}" +
+      ".q-head{display:flex;align-items:center;gap:12px;}" +
+      ".q-score{flex:0 0 auto;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;color:#0d9488;border:2px solid #0d9488;font-size:.95rem;}" +
+      ".q-head h3{margin:0;}" +
+      ".topic{font-size:.72rem;font-weight:600;background:#ccfbf1;color:#0f766e;padding:2px 8px;border-radius:999px;vertical-align:middle;}" +
+      ".qtext{font-weight:600;margin:8px 0;}" +
+      "blockquote{margin:8px 0;padding:8px 14px;border-left:3px solid #0d9488;background:#f8fafc;color:#374151;white-space:pre-wrap;}" +
+      ".delivery{font-size:.9rem;color:#4b5563;}" +
+      "@media print{body{padding:0;}a{display:none;}}";
+
+    return "<!DOCTYPE html><html><head><meta charset='utf-8'/>" +
+      "<title>" + esc(title) + "</title><style>" + css + "</style></head>" +
+      "<body><div class='report'>" +
+      "<p class='brandline'>⚡ FDE Interview Gauntlet</p>" +
+      "<h1>Interview Feedback</h1>" +
+      "<div class='meta'>" + metaBits.join("") + "</div>" +
+      overallHtml +
+      "<h2>Per-question breakdown</h2>" + qHtml +
+      "</div></body></html>";
+  }
+
   function downloadReport(data, pq) {
     var name = state.name || "Practice";
     var d = new Date();
     var pad = function (x) { return String(x).padStart(2, "0"); };
     var dateStr = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
 
-    var ov = data.overall || {};
-    var lines = [];
-    lines.push("# FDE Interview Gauntlet — Feedback");
-    lines.push("");
-    lines.push("- Name: " + name);
-    lines.push("- Date: " + dateStr);
-    lines.push("- Interview score: " + (typeof data.interviewScore === "number" ? data.interviewScore : "—") + " / 100");
-    if (typeof data.rankToday === "number") lines.push("- Today's rank: #" + data.rankToday);
-    if (data.personalBestToday) lines.push("- Personal best today: yes");
-    lines.push("");
-    lines.push("## Overall Feedback");
-    lines.push("");
-    if (ov.summary) { lines.push(ov.summary); lines.push(""); }
-    if (ov.topStrengths && ov.topStrengths.length) {
-      lines.push("### Top strengths");
-      ov.topStrengths.forEach(function (s) { lines.push("- " + s); });
-      lines.push("");
-    }
-    if (ov.focusAreas && ov.focusAreas.length) {
-      lines.push("### Focus areas");
-      ov.focusAreas.forEach(function (s) { lines.push("- " + s); });
-      lines.push("");
-    }
-    if (ov.softSkills) {
-      lines.push("### Delivery / Soft skills");
-      lines.push(ov.softSkills);
-      lines.push("");
-    }
-
-    lines.push("## Per-question breakdown");
-    lines.push("");
-    (pq || []).forEach(function (item, i) {
-      var n = (typeof item.idx === "number" ? item.idx : i) + 1;
-      lines.push("### Q" + n + (item.topic ? " — " + item.topic : ""));
-      lines.push("");
-      lines.push("**Question:** " + (item.prompt || "(unavailable)"));
-      lines.push("");
-      lines.push("**Your answer:**");
-      lines.push("");
-      lines.push("> " + String(item.answer || "(no answer captured)").replace(/\n/g, "\n> "));
-      lines.push("");
-      lines.push("**Score:** " + (typeof item.score === "number" ? item.score : "—") + " / 100");
-      lines.push("");
-      if (item.strengths && item.strengths.length) {
-        lines.push("**Strengths:**");
-        item.strengths.forEach(function (s) { lines.push("- " + s); });
-        lines.push("");
-      }
-      if (item.improvements && item.improvements.length) {
-        lines.push("**Improvements:**");
-        item.improvements.forEach(function (s) { lines.push("- " + s); });
-        lines.push("");
-      }
-      if (item.delivery) {
-        lines.push("**Delivery:** " + item.delivery);
-        lines.push("");
-      }
-    });
-
-    var md = lines.join("\n");
+    var html = buildReportHtml(data, pq, name, dateStr);
     var safeName = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "practice";
-    var filename = "fde-interview-" + safeName + "-" + dateStr + ".md";
 
+    var win = null;
+    try { win = window.open("", "_blank"); } catch (e) { win = null; }
+
+    if (win && win.document) {
+      try {
+        win.document.open();
+        win.document.write(html);
+        win.document.close();
+        // Give the new doc a beat to lay out before invoking print.
+        setTimeout(function () {
+          try { win.focus(); win.print(); } catch (e) { /* user can print manually */ }
+        }, 300);
+        return;
+      } catch (e) {
+        try { win.close(); } catch (e2) { /* no-op */ }
+      }
+    }
+
+    // Popup-blocker fallback: download a printable .html file instead.
     try {
-      var blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+      var blob = new Blob([html], { type: "text/html;charset=utf-8" });
       var url = URL.createObjectURL(blob);
-      var a = el("a", { href: url, download: filename });
+      var a = el("a", { href: url, download: "fde-interview-" + safeName + "-" + dateStr + ".html" });
       document.body.appendChild(a);
       a.click();
       setTimeout(function () {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       }, 0);
+      window.showToast("Allow popups to save as PDF, or open the downloaded file and print.", "warn");
     } catch (e) {
       window.showToast("Could not generate the download.", "error");
     }

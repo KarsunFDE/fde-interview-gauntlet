@@ -180,7 +180,37 @@ html, body {
   70% { box-shadow: 0 0 0 12px rgba(248,113,113,0); }
   100% { box-shadow: 0 0 0 0 rgba(248,113,113,0); }
 }
-.q-actions { margin-top: 4px; }
+.q-actions { margin-top: 4px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.skip-results { color: var(--muted); font-size: .9rem; }
+.skip-results:hover { color: var(--accent); }
+
+/* ---- Mid-interview "answer recorded" save state ---- */
+.save-state { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 20px; }
+.save-state--pending { display: flex; align-items: center; gap: 12px; color: var(--muted); font-weight: 600; font-size: .95rem; }
+.save-spinner {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent);
+  animation: spin .7s linear infinite; flex: 0 0 auto;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.save-confirm { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.05rem; color: var(--text); }
+.save-check {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 50%; background: rgba(74,222,128,.15);
+  color: var(--good); border: 1px solid rgba(74,222,128,.4); font-weight: 800;
+}
+.save-actions { margin-top: 16px; display: flex; justify-content: flex-end; }
+
+/* ---- Results "not saved" warning banner ---- */
+.not-saved-banner {
+  display: flex; align-items: flex-start; gap: 12px; margin-top: 18px;
+  background: rgba(245,176,62,.12); border: 1px solid rgba(245,176,62,.5);
+  border-left: 4px solid var(--amber); border-radius: var(--radius-sm);
+  padding: 14px 16px; color: #fde0a8;
+}
+.not-saved-banner__icon { font-size: 1.3rem; line-height: 1.4; flex: 0 0 auto; }
+.not-saved-banner__body { line-height: 1.55; font-size: .95rem; }
+.not-saved-banner__body strong { color: #fde68a; }
 
 /* ---- Answer length governor ---- */
 .answer-guidance { color: var(--faint); font-size: .88rem; margin: -8px 0 16px; }
