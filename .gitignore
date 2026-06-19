@@ -1,0 +1,16 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Logs / scratch
+*.log
+npm-debug.log*
+.cache/
+
+# Local env (worker secrets live in worker/, never here)
+.env
+.env.*
+.dev.vars
