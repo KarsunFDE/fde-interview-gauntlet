@@ -323,6 +323,30 @@ html, body {
   .results-actions .btn { width: auto; flex: 1 1 auto; }
 }
 
+/* ---- Finishing / staged progress ---- */
+.finishing-card { max-width: 460px; text-align: left; }
+.finishing-title { margin: 0 0 4px; font-size: 1.3rem; text-align: center; }
+.finishing-hint { margin: 0 0 20px; text-align: center; color: var(--muted); font-size: .9rem; }
+.fin-steps { display: flex; flex-direction: column; gap: 14px; }
+.fin-step { display: flex; align-items: center; gap: 12px; opacity: .45; transition: opacity .25s ease; }
+.fin-step.is-active, .fin-step.is-done { opacity: 1; }
+.fin-icon {
+  width: 26px; height: 26px; flex: 0 0 auto; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .9rem; font-weight: 800;
+}
+.fin-step.is-pending .fin-icon { color: var(--faint); border: 1px solid var(--line); }
+.fin-step.is-active .fin-icon { border: 1px solid var(--accent); }
+.fin-step.is-done .fin-icon { color: #06231a; background: var(--good); }
+.fin-label { flex: 1 1 auto; font-weight: 600; }
+.fin-sub { color: var(--muted); font-size: .85rem; font-variant-numeric: tabular-nums; }
+.fin-spinner {
+  width: 15px; height: 15px; border-radius: 50%;
+  border: 2px solid rgba(45,212,191,.3); border-top-color: var(--accent);
+  animation: spin .7s linear infinite;
+}
+.toast--ok { border-color: rgba(74,222,128,.5); }
+
 /* ---- Leaderboard ---- */
 .board-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
 .board-title { margin: 0; font-size: 1.7rem; letter-spacing: -.02em; }

@@ -345,6 +345,9 @@
           state.qIndex = 0;
           state.perQuestion = [];
           state.answers = {};
+          state.pending = [];                 // per-question judge records
+          state.judgeQueue = Promise.resolve(); // sequential background scoring chain
+          state.finishProgress = null;
           renderQuestion();
         } else {
           if (btn) { btn.disabled = false; btn.textContent = "Start Interview"; }
@@ -593,99 +596,55 @@
     if (transcript.split(/\s+/).length < 12) {
       if (!window.confirm("That answer looks very short. Submit anyway?")) return;
     }
+    btn.disabled = true; // guard against a double-fire before re-render
     stopRecorder();
     window.STT.tts.cancel();
-    btn.disabled = true;
-    btn.textContent = "Saving…";
-    btn.classList.add("is-loading");
-
-    // Inline "saving" state so the user knows the answer is being recorded.
-    var mount = $("#feedbackMount");
-    if (mount) {
-      clear(mount);
-      mount.appendChild(el("div", { class: "save-state save-state--pending" }, [
-        el("span", { class: "save-spinner" }),
-        el("span", { text: "Recording your answer…" })
-      ]));
-    }
 
     // Keep the learner's own transcript client-side (the API doesn't echo it back).
     state.answers[q.id] = transcript;
 
-    var lastQuestion = state.qIndex + 1 >= state.questions.length;
+    // Per-question judge record; scored in the BACKGROUND so we can advance now.
+    var rec = {
+      questionId: q.id, idx: state.qIndex,
+      prompt: q.prompt, type: q.type || null, topic: q.topic || null,
+      transcript: transcript,
+      words: (delivery && delivery.words) || countWords(transcript),
+      status: "queued", score: null, delivery: null, feedback: null
+    };
+    state.pending.push(rec);
 
-    window.API.judge(state.interviewId, q.id, transcript, delivery)
-      .then(function (data) {
-        if (data && data.ok) {
-          // Accumulate full per-question record (scores + feedback) for the END
-          // results + PDF. NEVER render the feedback card mid-interview.
-          state.perQuestion.push({
-            questionId: q.id,
-            idx: state.qIndex,
-            prompt: q.prompt,
-            type: q.type || null,
-            topic: q.topic || null,
-            score: data.score,
-            transcript: transcript,
-            words: (delivery && delivery.words) || countWords(transcript),
-            delivery: data.delivery || null,
-            feedback: data
-          });
-          confirmSavedAndAdvance(mount, lastQuestion);
-        } else {
-          btn.disabled = false;
-          btn.textContent = "Submit Answer";
-          btn.classList.remove("is-loading");
-          if (mount) clear(mount);
-          window.showToast("Couldn't save that answer — try Submit again.", "error");
-        }
-      })
-      .catch(function () {
-        btn.disabled = false;
-        btn.textContent = "Submit Answer";
-        btn.classList.remove("is-loading");
-        if (mount) clear(mount);
-        window.showToast("Couldn't save that answer — try Submit again.", "error");
-      });
-  }
+    // Sequential background queue: lets the learner move on immediately while
+    // each answer is scored in order — sequential writes avoid racing the
+    // shared interview record on the server.
+    state.judgeQueue = state.judgeQueue.then(function () {
+      rec.status = "scoring";
+      return window.API.judge(state.interviewId, rec.questionId, rec.transcript, delivery)
+        .then(function (data) {
+          if (data && data.ok) {
+            rec.status = "done";
+            rec.score = data.score;
+            rec.delivery = data.delivery || null;
+            rec.feedback = data;
+            state.perQuestion.push({
+              questionId: rec.questionId, idx: rec.idx, prompt: rec.prompt,
+              type: rec.type, topic: rec.topic, score: data.score,
+              transcript: rec.transcript, words: rec.words,
+              delivery: data.delivery || null, feedback: data
+            });
+          } else {
+            rec.status = "failed";
+          }
+        })
+        .catch(function () { rec.status = "failed"; })
+        .then(function () { if (typeof state.finishProgress === "function") state.finishProgress(); });
+    });
 
-  // Show a brief "answer recorded" confirmation, then advance to the next
-  // question (or finish). No scores/feedback shown until the results screen.
-  function confirmSavedAndAdvance(mount, lastQuestion) {
-    // Hide the answer controls so the user can't double-submit during the beat.
-    var actions = $(".q-actions");
-    if (actions) actions.style.display = "none";
-    var recCtl = $(".answer-block .rec-controls");
-    if (recCtl) recCtl.style.display = "none";
+    window.showToast("Answer recorded ✓ — scoring in the background.", "ok");
 
-    function advance() {
-      state.qIndex++;
-      if (state.qIndex >= state.questions.length) finishInterview();
-      else renderQuestion();
-    }
-
-    if (mount) {
-      clear(mount);
-      var nextBtn = el("button", { class: "btn btn--primary", type: "button" }, [
-        lastQuestion ? "Finish interview →" : "Next question →"
-      ]);
-      nextBtn.addEventListener("click", advance);
-      mount.appendChild(el("div", { class: "save-state save-state--ok reveal-in" }, [
-        el("div", { class: "save-confirm" }, [
-          el("span", { class: "save-check", text: "✓" }),
-          el("span", { text: "Answer recorded — scoring saved." })
-        ]),
-        el("div", { class: "save-actions" }, [nextBtn])
-      ]));
-      mount.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-
-    // Auto-advance after a short beat so it stays snappy; the button is a
-    // manual fallback if the user clicks first.
-    setTimeout(function () {
-      // Guard: only auto-advance if we're still on the same question DOM.
-      if (mount && mount.parentNode && mount.querySelector(".save-state--ok")) advance();
-    }, 1100);
+    // Advance immediately — no waiting on the judge.
+    state.qIndex++;
+    if (state.qIndex >= state.questions.length) finishInterview();
+    else renderQuestion();
   }
 
   // NOTE: mid-interview feedback rendering was removed by design — feedback now
@@ -712,18 +671,90 @@
     window.STT.tts.cancel();
     stopRecorder();
     renderHeader();
+
+    var answered = state.pending.length;
+    var ui = renderFinishing(answered);
+
+    function scoredCount() {
+      return state.pending.filter(function (p) {
+        return p.status === "done" || p.status === "failed";
+      }).length;
+    }
+
+    // Stage 1 → 2: wait for the background scoring queue to drain (it may
+    // already be done). Live-update the count as each answer settles.
+    state.finishProgress = function () { ui.setScoring(scoredCount(), answered); };
+    ui.setScoring(scoredCount(), answered);
+
+    Promise.resolve(state.judgeQueue)
+      .then(function () {
+        state.finishProgress = null;
+        ui.doneScoring();
+        ui.activateSynthesis();           // Stage 3: server-side overall synthesis
+        return window.API.finishInterview(state.interviewId);
+      })
+      .then(function (data) {
+        if (data && data.ok) {
+          ui.doneSynthesis();
+          ui.activateResults();           // Stage 4: render
+          setTimeout(function () { renderResults(data); }, 450);
+        } else {
+          window.showToast("Could not finalize results.", "error");
+          renderLobby();
+        }
+      })
+      .catch(function () {
+        window.showToast("Could not finalize results.", "error");
+        renderLobby();
+      });
+  }
+
+  // Staged "finishing" screen: a checklist that advances as scoring → synthesis
+  // → results complete, instead of one undifferentiated spinner.
+  function renderFinishing(answered) {
     var root = app();
     clear(root);
+
+    function mkRow(label) {
+      var icon = el("span", { class: "fin-icon" });
+      var sub = el("span", { class: "fin-sub" });
+      var r = el("div", { class: "fin-step is-pending" }, [
+        icon, el("span", { class: "fin-label", text: label }), sub
+      ]);
+      r._icon = icon; r._sub = sub;
+      return r;
+    }
+    function setState(r, st) {
+      r.classList.remove("is-pending", "is-active", "is-done");
+      r.classList.add("is-" + st);
+      clear(r._icon);
+      if (st === "active") r._icon.appendChild(el("span", { class: "fin-spinner" }));
+      else r._icon.textContent = st === "done" ? "✓" : "○";
+    }
+
+    var s1 = mkRow("Answers submitted");
+    var s2 = mkRow("Scoring your answers");
+    var s3 = mkRow("Synthesizing overall feedback");
+    var s4 = mkRow("Preparing your results");
+
+    setState(s1, "done"); s1._sub.textContent = answered + " captured";
+    setState(s2, "active"); s2._sub.textContent = "0 / " + answered;
+
     root.appendChild(el("div", { class: "screen screen--center" }, [
-      el("div", { class: "card screen-in", text: "Summarizing…" })
+      el("div", { class: "card finishing-card screen-in" }, [
+        el("h2", { class: "finishing-title", text: "Scoring your interview" }),
+        el("p", { class: "finishing-hint", text: "Hang tight — this takes a few seconds." }),
+        el("div", { class: "fin-steps" }, [s1, s2, s3, s4])
+      ])
     ]));
 
-    window.API.finishInterview(state.interviewId)
-      .then(function (data) {
-        if (data && data.ok) renderResults(data);
-        else window.showToast("Could not finalize results.", "error");
-      })
-      .catch(function () { renderLobby(); });
+    return {
+      setScoring: function (done, total) { s2._sub.textContent = done + " / " + total; },
+      doneScoring: function () { setState(s2, "done"); s2._sub.textContent = answered + " / " + answered; },
+      activateSynthesis: function () { setState(s3, "active"); },
+      doneSynthesis: function () { setState(s3, "done"); },
+      activateResults: function () { setState(s4, "active"); }
+    };
   }
 
   // Merge the API perQuestion (source of truth for scores/feedback) with the
