@@ -24,10 +24,23 @@
   };
 
   // ---- Answer length governor --------------------------------------------
-  var MAX_CHARS = 2000;
-  var SOFT_WORD_LIMIT = 275;
-  var AMBER_WORDS = 245;
-  var TARGET_WORDS = 210;
+  var MAX_CHARS = 2200;        // hard cap on the edit textarea (maxlength)
+  var WORD_CEILING = 300;      // recording auto-stop ceiling (rare under 2-min cap)
+  var WORD_CEILING_HINT = 270; // "approaching length limit" hint while recording
+  var TARGET_WORDS = 210;      // informational target on the edit counter
+  var AMBER_WORDS = 245;       // edit counter turns amber past this (informational only)
+
+  // ---- Recording timer --------------------------------------------------
+  var MAX_RECORD_MS = 120000;  // 2:00 hard cap — the primary, visible bound
+  var AMBER_AT_MS = 30000;     // countdown amber at <= 30s remaining
+  var RED_AT_MS = 10000;       // countdown red at <= 10s remaining
+
+  function fmtClock(ms) {
+    var total = Math.max(0, Math.ceil(ms / 1000));
+    var m = Math.floor(total / 60);
+    var s = total % 60;
+    return m + ":" + (s < 10 ? "0" : "") + s;
+  }
 
   function countWords(s) {
     s = (s || "").trim();
@@ -288,7 +301,7 @@
 
     var micNote = el("p", { class: "mic-note" }, [
       window.STT.supported()
-        ? "🎙 Mic ready — you'll speak your answers. You can edit the transcript before submitting."
+        ? "🎙 Mic ready — press Record, speak for up to 2 minutes, then review and edit your transcript before submitting."
         : "⚠ Speech capture isn't supported in this browser. You can still type your answers. (Chrome / Edge recommended.)"
     ]);
 
@@ -296,7 +309,8 @@
       el("h3", { text: "How it works" }),
       el("ol", { class: "how-list" }, [
         el("li", { text: "10 questions, one interview. Each is read aloud." }),
-        el("li", { text: "Speak your answer — it transcribes live. Fix typos in the box if needed." }),
+        el("li", { text: "Press Record and speak — you get up to 2 minutes. The countdown shows the time left." }),
+        el("li", { text: "On stop or time-out, your full transcript appears for you to edit — no rush, editing isn't timed." }),
         el("li", { text: "Submit each answer — it's scored privately. No feedback shown mid-interview." }),
         el("li", { text: "After all 10, you'll see your full score + feedback. Finish to post your best to today's leaderboard." })
       ])
@@ -373,6 +387,10 @@
     state.recording = false;
   }
 
+  // The per-question flow has four states: ready -> recording -> review -> submit.
+  // The TIMER runs ONLY in the recording state. The transcript is captured into an
+  // internal STT buffer while recording (no editable field shown), then rendered
+  // into an editable textarea for an UNTIMED review/edit pass before submit.
   function renderQuestion() {
     window.STT.tts.cancel();
     renderHeader();
@@ -402,188 +420,291 @@
 
     var prompt = el("h2", { class: "q-prompt", text: q.prompt });
 
-    var guidance = el("p", {
-      class: "answer-guidance",
-      text: "Aim for ~90 seconds (~210 words). Keep it concise — limit ~275 words."
-    });
+    // Mount the question shell once; each state re-renders into #qStage below it.
+    var stage = el("div", { class: "q-stage", id: "qStage" });
 
-    // ---- Transcript box (always present; STT feeds it) ----
-    var ta = el("textarea", {
-      class: "transcript",
-      id: "transcriptBox",
-      rows: "6",
-      maxlength: String(MAX_CHARS),
-      placeholder: window.STT.supported()
-        ? "Hit Record and start talking — your words appear here. Edit freely."
-        : "Type your answer here…"
-    });
-
-    // ---- Live word counter + over-limit nudge ----
-    var counter = el("span", { class: "wordcount", text: "0 / " + SOFT_WORD_LIMIT + " words" });
-    var nudge = el("p", { class: "len-nudge", text: "A bit long — interviewers tune out after ~90s. Trim if you can." });
-    nudge.style.display = "none";
-    var limitNote = el("p", { class: "len-limit", text: "Length limit reached — wrap up your answer." });
-    limitNote.style.display = "none";
-
-    function atCharLimit() { return (ta.value || "").length >= MAX_CHARS; }
-    function atWordLimit() { return countWords(ta.value) >= SOFT_WORD_LIMIT; }
-    function atAnyLimit() { return atCharLimit() || atWordLimit(); }
-
-    function updateCounter() {
-      var w = countWords(ta.value);
-      counter.textContent = w + " / " + SOFT_WORD_LIMIT + " words";
-      counter.classList.remove("is-amber", "is-red");
-      if (w > SOFT_WORD_LIMIT) counter.classList.add("is-red");
-      else if (w > AMBER_WORDS) counter.classList.add("is-amber");
-      nudge.style.display = w > SOFT_WORD_LIMIT ? "" : "none";
-    }
-
-    // ---- Delivery timing / mode tracking for this answer ----
-    var recordStartMs = null; // first time recording started this answer
-    var recordStopMs = null;  // last time recording stopped
-    var recordedThisAnswer = false;
-
-    var finalSoFar = ""; // committed transcript text
-    function composed(interim) {
-      return (finalSoFar + (interim ? " " + interim : "")).trim();
-    }
-
-    var controls = el("div", { class: "rec-controls" });
+    var card = el("div", { class: "card q-card screen-in" }, [
+      progress,
+      meta,
+      prompt,
+      stage
+    ]);
+    root.appendChild(el("div", { class: "screen" }, [card]));
 
     var supported = window.STT.supported();
-    var recBtn = null;
-    var liveDot = null;
 
-    if (supported) {
-      liveDot = el("span", { class: "live-dot" });
-      recBtn = el("button", { class: "btn btn--rec", id: "recBtn", type: "button" }, [
-        liveDot,
-        el("span", { class: "rec-label", text: "Record" })
+    // ---- Per-answer delivery tracking (survives re-record) ----
+    var recordStartMs = null; // start of the FINAL recording attempt
+    var recordStopMs = null;  // stop of the FINAL recording attempt
+    var recordedThisAnswer = false; // true if speech captured at least once
+
+    // Timer handles for the recording state.
+    var tickTimer = null;
+    var hardStopTimer = null;
+
+    function clearTimers() {
+      if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+      if (hardStopTimer) { clearTimeout(hardStopTimer); hardStopTimer = null; }
+    }
+
+    // Read the question aloud after paint (Ready state only triggers this).
+    function speakPrompt() {
+      if (state.ttsOn) {
+        setTimeout(function () { window.STT.tts.speak(q.prompt, state.ttsOn); }, 250);
+      }
+    }
+
+    // ====================================================================
+    // STATE 1: READY — no timer running.
+    // ====================================================================
+    function renderReady() {
+      clearTimers();
+      stopRecorder();
+      clear(stage);
+
+      var recBtn = el("button", { class: "btn btn--primary btn--lg", id: "recBtn", type: "button" }, [
+        "🎙 Record answer"
       ]);
+      recBtn.addEventListener("click", function () { renderRecording(); });
+
+      var guidance = el("p", { class: "answer-guidance answer-guidance--ready", text:
+        "You have up to 2 minutes. The timer starts when you press Record — you'll review and edit the transcript afterward."
+      });
+
+      var typeInstead = el("button", { class: "btn btn--ghost type-instead", type: "button", text: "Type instead" });
+      typeInstead.addEventListener("click", function () {
+        renderReview({ mode: "typed", transcript: "", reason: null });
+      });
+
+      stage.appendChild(el("div", { class: "ready-block" }, [
+        recBtn,
+        guidance,
+        typeInstead
+      ]));
+
+      maybeAddSkip(stage);
+      speakPrompt();
+    }
+
+    // ====================================================================
+    // STATE 2: RECORDING — the ONLY state where the timer runs.
+    // ====================================================================
+    function renderRecording() {
+      window.STT.tts.cancel();
+      clear(stage);
+
+      // Mic unsupported should never reach here, but guard anyway.
+      if (!supported) { renderReview({ mode: "typed", transcript: "", reason: null }); return; }
+
+      var countdown = el("div", { class: "rec-countdown", text: fmtClock(MAX_RECORD_MS) });
+      var pulse = el("div", { class: "rec-status" }, [
+        el("span", { class: "rec-pulse-dot" }),
+        el("span", { class: "rec-status__label", text: "Recording…" })
+      ]);
+      var wordHint = el("span", { class: "rec-wordhint", text: "~0 words" });
+      var ceilingHint = el("p", { class: "len-nudge", text: "Approaching the length limit — wrap up soon." });
+      ceilingHint.style.display = "none";
+
+      var stopBtn = el("button", { class: "btn btn--primary", id: "stopBtn", type: "button", text: "⏹ Stop & review" });
+
+      var liveWords = 0; // word count of the internal buffer (committed + interim)
+
+      // ---- stopAndReview centralizes every exit from recording ----
+      var stopped = false;
+      function stopAndReview(reason) {
+        if (stopped) return;
+        stopped = true;
+        clearTimers();
+        recordStopMs = Date.now();
+        var finalText = (state.recorder && state.recorder.getTranscript) ? state.recorder.getTranscript() : "";
+        stopRecorder();
+        renderReview({ mode: "speech", transcript: finalText, reason: reason });
+      }
+
+      stopBtn.addEventListener("click", function () { stopAndReview("manual"); });
 
       state.recorder = window.STT.createRecorder({
-        atLimit: atAnyLimit,
-        onLimit: function () {
-          recordStopMs = Date.now();
-          limitNote.style.display = "";
-        },
         onStart: function () {
           state.recording = true;
-          recBtn.classList.add("is-recording");
-          $(".rec-label", recBtn).textContent = "Stop";
         },
-        onInterim: function (interim) {
-          if (atAnyLimit()) return; // stop appending once capped
-          ta.value = composed(interim);
-          updateCounter();
-        },
-        onFinal: function (chunk) {
-          if (atAnyLimit()) { updateCounter(); return; }
-          finalSoFar = (finalSoFar + " " + chunk).trim();
-          if (finalSoFar.length > MAX_CHARS) finalSoFar = finalSoFar.slice(0, MAX_CHARS);
-          ta.value = finalSoFar;
-          updateCounter();
+        onUpdate: function (text) {
+          liveWords = countWords(text);
+          wordHint.textContent = "~" + liveWords + " words";
+          if (liveWords >= WORD_CEILING_HINT) ceilingHint.style.display = "";
+          if (liveWords >= WORD_CEILING) stopAndReview("word_ceiling");
         },
         onError: function (e) {
           var code = e && e.error;
           if (code === "not-allowed" || code === "service-not-allowed") {
+            // Mic denied — fall back to typed review.
             window.showToast("Microphone permission denied. Type your answer instead.", "error");
+            stopped = true;
+            clearTimers();
+            stopRecorder();
+            renderReview({ mode: "typed", transcript: "", reason: null });
           } else if (code === "no-speech") {
-            // benign; ignore
+            // benign; ignore (recorder auto-restarts)
           } else if (code !== "aborted") {
             window.showToast("Speech recognition error" + (code ? " (" + code + ")" : "") + ".", "warn");
           }
         },
         onEnd: function () {
           state.recording = false;
-          if (recordStartMs && !atAnyLimit()) recordStopMs = Date.now();
-          recBtn.classList.remove("is-recording");
-          $(".rec-label", recBtn).textContent = finalSoFar ? "Resume" : "Record";
         }
       });
 
-      // If the user edits the textarea manually, treat it as the new committed base.
-      ta.addEventListener("input", function () {
-        if (!state.recording) finalSoFar = ta.value;
-        updateCounter();
-      });
+      stage.appendChild(el("div", { class: "recording-block" }, [
+        countdown,
+        pulse,
+        el("div", { class: "rec-hintrow" }, [wordHint]),
+        ceilingHint,
+        el("div", { class: "q-actions" }, [stopBtn])
+      ]));
 
-      recBtn.addEventListener("click", function () {
-        if (!state.recorder) return;
-        if (state.recorder.isListening()) {
-          state.recorder.stop();
-          recordStopMs = Date.now();
-        } else {
-          if (atAnyLimit()) {
-            limitNote.style.display = "";
-            return;
-          }
-          // sync base with any manual edits before resuming
-          finalSoFar = ta.value;
-          recordedThisAnswer = true;
-          if (recordStartMs == null) recordStartMs = Date.now();
-          state.recorder.start();
-        }
-      });
+      // Start recording + the timer NOW (and only now).
+      recordedThisAnswer = true;
+      recordStartMs = Date.now();
+      recordStopMs = null;
+      state.recorder.start();
 
-      controls.appendChild(recBtn);
-      controls.appendChild(el("span", { class: "rec-hint", text: "Speak naturally. Stop and edit anytime." }));
-    } else {
-      controls.appendChild(el("p", {
-        class: "no-stt",
-        text: "Speech not supported in this browser — type your answer (Chrome / Edge recommended)."
-      }));
-      ta.addEventListener("input", updateCounter);
+      // Countdown tick — updates the visible clock + amber/red bands.
+      tickTimer = setInterval(function () {
+        var remaining = MAX_RECORD_MS - (Date.now() - recordStartMs);
+        if (remaining < 0) remaining = 0;
+        countdown.textContent = fmtClock(remaining);
+        countdown.classList.remove("is-amber", "is-red");
+        if (remaining <= RED_AT_MS) countdown.classList.add("is-red");
+        else if (remaining <= AMBER_AT_MS) countdown.classList.add("is-amber");
+      }, 250);
+
+      // Hard 2-minute auto-stop — the primary, clearly-announced bound.
+      hardStopTimer = setTimeout(function () { stopAndReview("timeout"); }, MAX_RECORD_MS);
     }
 
-    var submitBtn = el("button", { class: "btn btn--primary", id: "submitBtn", type: "button" }, ["Submit Answer"]);
-    submitBtn.addEventListener("click", function () {
-      if (state.recording && state.recorder) {
-        try { state.recorder.stop(); } catch (e) { /* no-op */ }
-        recordStopMs = Date.now();
-      } else if (recordStartMs && recordStopMs == null) {
-        recordStopMs = Date.now();
+    // ====================================================================
+    // STATE 3: REVIEW / EDIT — untimed. Reached on ANY stop (or typed path).
+    // ====================================================================
+    function renderReview(o) {
+      clearTimers();
+      stopRecorder();
+      window.STT.tts.cancel();
+      clear(stage);
+
+      var mode = o.mode;                 // "speech" | "typed"
+      var reason = o.reason;             // "manual" | "timeout" | "word_ceiling" | null
+      var initial = (o.transcript || "").slice(0, MAX_CHARS);
+
+      // Stop-reason banner (omitted for typed path).
+      var banner = null;
+      if (mode === "speech") {
+        var msg = "You stopped recording.";
+        if (reason === "timeout") msg = "Time's up (2 minutes).";
+        else if (reason === "word_ceiling") msg = "Reached the length limit.";
+        banner = el("div", { class: "stop-banner" }, [
+          el("span", { class: "stop-banner__icon", text: "✓" }),
+          el("span", { class: "stop-banner__text", text: msg })
+        ]);
       }
-      var delivery = buildDelivery(ta.value, recordStartMs, recordStopMs, recordedThisAnswer);
-      submitAnswer(q, ta.value, submitBtn, delivery);
-    });
 
-    var qActions = el("div", { class: "q-actions" }, [submitBtn]);
+      var ta = el("textarea", {
+        class: "transcript",
+        id: "transcriptBox",
+        rows: "8",
+        maxlength: String(MAX_CHARS),
+        placeholder: mode === "typed"
+          ? "Type your answer here…"
+          : "Your transcript appears here — edit it freely, then submit."
+      });
+      ta.value = initial;
 
-    // Practice-only: "Skip to results" ends the interview immediately.
-    if (isPractice()) {
+      var counter = el("span", { class: "wordcount" });
+      var nudge = el("p", { class: "len-nudge", text: "A bit long — interviewers tune out after ~90s. Trim if you can." });
+      nudge.style.display = "none";
+
+      function updateCounter() {
+        var w = countWords(ta.value);
+        counter.textContent = w + " words (target ~" + TARGET_WORDS + ")";
+        counter.classList.remove("is-amber", "is-red");
+        if (w > WORD_CEILING) counter.classList.add("is-red");
+        else if (w > AMBER_WORDS) counter.classList.add("is-amber");
+        nudge.style.display = w > AMBER_WORDS ? "" : "none";
+      }
+      ta.addEventListener("input", updateCounter);
+      updateCounter();
+
+      var submitBtn = el("button", { class: "btn btn--primary", id: "submitBtn", type: "button" }, ["Submit Answer"]);
+      submitBtn.addEventListener("click", function () {
+        var text = (ta.value || "").trim();
+        var delivery = buildDelivery(
+          text,
+          mode === "speech" ? recordStartMs : null,
+          mode === "speech" ? recordStopMs : null,
+          mode === "speech" && recordedThisAnswer
+        );
+        submitAnswer(q, text, submitBtn, delivery);
+      });
+
+      // Re-record (speech) / Clear (typed) — discard and go back fresh.
+      var reBtn = el("button", { class: "btn btn--ghost", type: "button" }, [
+        mode === "typed" ? "Clear" : "↺ Re-record"
+      ]);
+      reBtn.addEventListener("click", function () {
+        recordStartMs = null;
+        recordStopMs = null;
+        recordedThisAnswer = false;
+        if (mode === "typed") {
+          ta.value = "";
+          updateCounter();
+          ta.focus();
+        } else if (supported) {
+          renderReady();
+        } else {
+          ta.value = "";
+          updateCounter();
+        }
+      });
+
+      var typedNote = (mode === "typed" && !supported)
+        ? el("p", { class: "no-stt", text: "Speech isn't supported in this browser — type your answer (Chrome / Edge recommended)." })
+        : null;
+
+      var qActions = el("div", { class: "q-actions" }, [submitBtn, reBtn]);
+
+      stage.appendChild(el("div", { class: "review-block" }, [
+        banner,
+        typedNote,
+        el("div", { class: "answer-block" }, [
+          el("label", { class: "field-label", text: "Your answer" }),
+          ta,
+          el("div", { class: "answer-foot" }, [counter]),
+          nudge
+        ]),
+        qActions
+      ]));
+
+      maybeAddSkip(stage);
+      if (mode === "typed") ta.focus();
+    }
+
+    // Practice-only "Skip to results" — appended to whichever state is showing.
+    function maybeAddSkip(mountStage) {
+      if (!isPractice()) return;
       var skipBtn = el("button", { class: "btn btn--ghost skip-results", type: "button" }, ["Skip to results →"]);
       skipBtn.addEventListener("click", function () {
+        clearTimers();
         stopRecorder();
         window.STT.tts.cancel();
         finishInterview();
       });
-      qActions.appendChild(skipBtn);
+      mountStage.appendChild(el("div", { class: "skip-row" }, [skipBtn]));
     }
 
-    var feedbackMount = el("div", { id: "feedbackMount" });
-
-    var card = el("div", { class: "card q-card screen-in" }, [
-      progress,
-      meta,
-      prompt,
-      guidance,
-      el("div", { class: "answer-block" }, [
-        el("label", { class: "field-label", text: "Your answer" }),
-        ta,
-        el("div", { class: "answer-foot" }, [counter, limitNote]),
-        nudge,
-        controls
-      ]),
-      qActions,
-      feedbackMount
-    ]);
-
-    root.appendChild(el("div", { class: "screen" }, [card]));
-
-    // Read the question aloud after paint.
-    if (state.ttsOn) {
-      setTimeout(function () { window.STT.tts.speak(q.prompt, state.ttsOn); }, 250);
+    // ---- Entry point: pick the starting state ----
+    if (!supported) {
+      // STT unsupported: skip Ready/Recording entirely.
+      renderReview({ mode: "typed", transcript: "", reason: null });
+    } else {
+      renderReady();
     }
   }
 

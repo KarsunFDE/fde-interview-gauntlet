@@ -222,6 +222,49 @@ html, body {
   font-size: .85rem; padding: 8px 12px; border-radius: var(--radius-sm); margin: 8px 0 0; }
 .len-limit { color: var(--bad); font-size: .82rem; font-weight: 600; margin: 0; }
 
+/* ---- Per-question recording flow (Ready / Recording / Review) ---- */
+.q-stage { margin-top: 4px; }
+
+/* State 1: Ready */
+.ready-block { display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+.ready-block .btn--lg { margin-bottom: 4px; }
+.answer-guidance--ready { text-align: center; margin: 12px 0 14px; font-size: .92rem; color: var(--muted); }
+.type-instead { align-self: center; color: var(--muted); }
+.type-instead:hover { color: var(--accent); }
+
+/* State 2: Recording */
+.recording-block { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 8px 0 4px; }
+.rec-countdown {
+  font-size: 3.4rem; font-weight: 800; line-height: 1; letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums; color: var(--accent);
+}
+.rec-countdown.is-amber { color: var(--amber); }
+.rec-countdown.is-red { color: var(--bad); animation: countpulse 1s infinite; }
+@keyframes countpulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+.rec-status { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 700; }
+.rec-pulse-dot {
+  width: 14px; height: 14px; border-radius: 50%; background: var(--bad);
+  box-shadow: 0 0 0 0 rgba(248,113,113,.6); animation: pulse 1.2s infinite;
+}
+.rec-status__label { font-size: 1rem; }
+.rec-hintrow { display: flex; justify-content: center; }
+.rec-wordhint { font-size: .85rem; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+/* State 3: Review / Edit */
+.review-block { display: flex; flex-direction: column; }
+.stop-banner {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+  background: rgba(45,212,191,.1); border: 1px solid rgba(45,212,191,.35);
+  border-left: 4px solid var(--accent); border-radius: var(--radius-sm);
+  padding: 11px 14px; color: var(--text); font-weight: 600; font-size: .95rem;
+}
+.stop-banner__icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; flex: 0 0 auto; border-radius: 50%;
+  background: rgba(45,212,191,.2); color: var(--accent); font-weight: 800; font-size: .8rem;
+}
+.skip-row { margin-top: 12px; display: flex; justify-content: flex-start; }
+
 /* ---- Delivery line (feedback + per-question) ---- */
 .fb-delivery { display: flex; align-items: center; gap: 8px; margin-top: 16px; font-size: .9rem;
   background: rgba(99,102,241,.08); border: 1px solid rgba(99,102,241,.25); border-radius: var(--radius-sm); padding: 9px 13px; }

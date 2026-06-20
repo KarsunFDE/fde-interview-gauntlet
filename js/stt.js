@@ -11,8 +11,15 @@
     return !!SR;
   }
 
-  // Recorder wraps a SpeechRecognition instance with callbacks for interim and
-  // final results, errors, and end-of-stream. Caller owns the transcript state.
+  // Recorder wraps a SpeechRecognition instance. The recognizer fills an INTERNAL
+  // transcript buffer — the caller never feeds a visible textarea while recording.
+  // Read the buffered transcript on stop via getTranscript(). onUpdate(text) fires
+  // with the live composed buffer (committed + interim) so the caller can show a
+  // non-editable hint such as a running word count — NOT an editable field.
+  //
+  // Graceful restart: Chrome silently ends recognition every ~minute. While we are
+  // still "listening" (user hasn't stopped, no external stop), we auto-restart so
+  // the answer is never cut short. Only the caller's explicit stop() ends capture.
   function createRecorder(opts) {
     opts = opts || {};
     if (!SR) return null;
@@ -24,6 +31,11 @@
 
     var listening = false;
     var stoppedByUser = false;
+    var finalBuffer = ""; // committed transcript so far
+
+    function composed(interim) {
+      return (finalBuffer + (interim ? " " + interim : "")).trim();
+    }
 
     rec.onresult = function (event) {
       var interim = "";
@@ -36,16 +48,10 @@
           interim += r[0].transcript;
         }
       }
-      if (finalChunk && typeof opts.onFinal === "function") opts.onFinal(finalChunk);
-      if (typeof opts.onInterim === "function") opts.onInterim(interim);
-      // Length governor: let the caller decide whether the answer has hit its cap.
-      // If so, stop appending and shut the recognizer down cleanly.
-      if (typeof opts.atLimit === "function" && opts.atLimit()) {
-        stoppedByUser = true;
-        listening = false;
-        try { rec.stop(); } catch (err) { /* no-op */ }
-        if (typeof opts.onLimit === "function") opts.onLimit();
+      if (finalChunk) {
+        finalBuffer = (finalBuffer + " " + finalChunk).trim();
       }
+      if (typeof opts.onUpdate === "function") opts.onUpdate(composed(interim));
     };
 
     rec.onerror = function (e) {
@@ -53,7 +59,9 @@
     };
 
     rec.onend = function () {
-      // Chrome stops recognition periodically; auto-restart unless the user stopped.
+      // Chrome stops recognition periodically; auto-restart while still listening so
+      // its silent auto-stop never ends the answer early. Only the 2-min timer, the
+      // word ceiling, or a user Stop (all routed through stop()) end capture.
       if (listening && !stoppedByUser) {
         try {
           rec.start();
@@ -70,6 +78,7 @@
       start: function () {
         if (listening) return;
         stoppedByUser = false;
+        finalBuffer = "";
         listening = true;
         try {
           rec.start();
@@ -90,6 +99,10 @@
       },
       isListening: function () {
         return listening;
+      },
+      // Final buffered transcript (committed text only — interim is dropped on stop).
+      getTranscript: function () {
+        return finalBuffer.trim();
       }
     };
   }
