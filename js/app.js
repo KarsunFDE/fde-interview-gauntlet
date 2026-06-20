@@ -632,6 +632,14 @@
       ta.addEventListener("input", updateCounter);
       updateCounter();
 
+      // Speech transcripts: remind learners to FIX, not POLISH.
+      var editNote = (mode === "speech")
+        ? el("p", { class: "edit-note" }, [
+            el("strong", { text: "Edit only to fix transcription errors" }),
+            " — wrong words, spelling, garbled tech terms. Don't rewrite or polish your answer; keep it honest."
+          ])
+        : null;
+
       var submitBtn = el("button", { class: "btn btn--primary", id: "submitBtn", type: "button" }, ["Submit Answer"]);
       submitBtn.addEventListener("click", function () {
         var text = (ta.value || "").trim();
@@ -657,7 +665,9 @@
           updateCounter();
           ta.focus();
         } else if (supported) {
-          renderReady();
+          if (window.confirm("Re-record discards this ENTIRE answer and records your whole response again from scratch — it isn't for fixing individual sentences. Continue?")) {
+            renderReady();
+          }
         } else {
           ta.value = "";
           updateCounter();
@@ -676,6 +686,7 @@
         el("div", { class: "answer-block" }, [
           el("label", { class: "field-label", text: "Your answer" }),
           ta,
+          editNote,
           el("div", { class: "answer-foot" }, [counter]),
           nudge
         ]),

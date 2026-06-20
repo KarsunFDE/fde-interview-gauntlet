@@ -163,6 +163,12 @@ html, body {
 
 .rec-controls { display: flex; align-items: center; gap: 14px; margin-top: 12px; flex-wrap: wrap; }
 .rec-hint { color: var(--faint); font-size: .85rem; }
+.edit-note {
+  color: var(--muted); font-size: .82rem; line-height: 1.5; margin: 8px 0 0;
+  background: rgba(99,102,241,.07); border: 1px solid rgba(99,102,241,.2);
+  border-radius: var(--radius-sm); padding: 8px 11px;
+}
+.edit-note strong { color: #c7caff; }
 .no-stt { color: var(--warn); font-size: .9rem; background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.25); padding: 10px 12px; border-radius: var(--radius-sm); margin: 0; }
 
 .btn--rec {
