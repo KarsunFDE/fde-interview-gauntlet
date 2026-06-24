@@ -239,7 +239,7 @@
             state.tier = data.tier || null;
             state.session = data;
             saveCreds();
-            renderLobby();
+            renderModeSelect();
           } else {
             btn.disabled = false;
             btn.textContent = "Enter the Gauntlet";
@@ -260,6 +260,61 @@
     ]);
 
     root.appendChild(el("div", { class: "screen screen--center" }, [card]));
+  }
+
+  // ===========================================================================
+  // SCREEN: Mode select (hub) — Interview vs System Design + boards + trainer
+  // ===========================================================================
+  function creds() {
+    return { name: state.name, passcode: state.passcode, tier: state.tier };
+  }
+
+  function renderModeSelect() {
+    window.STT.tts.cancel();
+    renderHeader();
+    var root = app();
+    clear(root);
+
+    function modeCard(title, blurb, eg, onClick) {
+      var c = el("button", { class: "card sd-track-card", type: "button" }, [
+        el("h2", { class: "sd-track-title", text: title }),
+        el("p", { class: "sd-track-blurb", text: blurb }),
+        el("p", { class: "sd-track-eg", text: eg })
+      ]);
+      c.addEventListener("click", onClick);
+      return c;
+    }
+
+    var interviewCard = modeCard(
+      "Interview Gauntlet",
+      "10 spoken interview questions. An AI judge scores substance, mindset, and delivery. Daily prize for the top scorer.",
+      "behavioral · scenario · technical",
+      function () { renderLobby(); }
+    );
+    var designCard = modeCard(
+      "System Design Simulator",
+      "Scope a loose client brief, design it on a live canvas, defend the WHY, then adapt when constraints change. Two AI critics score it.",
+      "full-stack · AI / agentic · 20-min sessions",
+      function () { window.DESIGN.open(creds(), renderModeSelect); }
+    );
+
+    var boardsBtn = el("button", { class: "btn btn--primary", type: "button", text: "🏆 Leaderboards" });
+    boardsBtn.addEventListener("click", function () { window.DESIGN.boards(creds(), renderModeSelect); });
+    var trainerBtn = el("button", { class: "btn btn--ghost", type: "button", text: "Trainer reports" });
+    trainerBtn.addEventListener("click", function () { window.TRAINER.open(renderModeSelect); });
+
+    root.appendChild(el("div", { class: "screen" }, [
+      el("div", { class: "sd-head" }, [
+        el("h1", { class: "lobby-greet" }, [
+          "Welcome, ",
+          el("span", { class: "accent", text: (state.name || "").split(" ")[0] }),
+          state.tier ? el("span", { class: "tier-pill tier-pill--inline", text: state.tier }) : null
+        ])
+      ]),
+      el("p", { class: "sd-sub", text: "Pick your arena." }),
+      el("div", { class: "sd-track-grid" }, [interviewCard, designCard]),
+      el("div", { class: "mode-actions" }, [boardsBtn, trainerBtn])
+    ]));
   }
 
   // ===========================================================================
@@ -336,6 +391,9 @@
 
   function renderTabs(active) {
     var tabs = el("div", { class: "tabs" });
+    var modesTab = el("button", { class: "tab", type: "button", text: "← Modes" });
+    modesTab.addEventListener("click", function () { renderModeSelect(); });
+    tabs.appendChild(modesTab);
     var lobbyTab = el("button", { class: "tab" + (active === "lobby" ? " is-active" : ""), type: "button", text: "Lobby" });
     lobbyTab.addEventListener("click", function () { if (active !== "lobby") renderLobby(); });
     var boardTab = el("button", { class: "tab" + (active === "board" ? " is-active" : ""), type: "button", text: "Leaderboard" });
