@@ -294,8 +294,8 @@
     var designCard = modeCard(
       "System Design Simulator",
       "Scope a loose client brief, design it on a live canvas, defend the WHY, then adapt when constraints change. Two AI critics score it.",
-      "full-stack · AI / agentic · 20-min sessions",
-      function () { window.DESIGN.open(creds(), renderModeSelect); }
+      "full-stack · AI / agentic · ~20-min sessions",
+      function () { openTrackModal(); }
     );
 
     var boardsBtn = el("button", { class: "btn btn--primary", type: "button", text: "🏆 Leaderboards" });
@@ -315,6 +315,43 @@
       el("div", { class: "sd-track-grid" }, [interviewCard, designCard]),
       el("div", { class: "mode-actions" }, [boardsBtn, trainerBtn])
     ]));
+  }
+
+  // Track picker — a modal over the hub, so System Design is one click + one
+  // choice instead of two full-page jumps.
+  function openTrackModal() {
+    var overlay = el("div", { class: "sd-modal-overlay" });
+    function trackBtn(track, title, blurb, eg) {
+      var b = el("button", { class: "card sd-track-card", type: "button" }, [
+        el("h2", { class: "sd-track-title", text: title }),
+        el("p", { class: "sd-track-blurb", text: blurb }),
+        el("p", { class: "sd-track-eg", text: eg })
+      ]);
+      b.addEventListener("click", function () {
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        window.DESIGN.openTrack(creds(), track, renderModeSelect);
+      });
+      return b;
+    }
+    var close = el("button", { class: "btn btn--ghost sd-modal-close", type: "button", text: "✕" });
+    close.addEventListener("click", function () { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); });
+    overlay.addEventListener("click", function (e) { if (e.target === overlay) overlay.parentNode.removeChild(overlay); });
+    overlay.appendChild(el("div", { class: "sd-modal sd-track-modal" }, [
+      el("div", { class: "sd-modal-head" }, [
+        el("h2", { class: "panel-title", text: "Choose a track" }), close
+      ]),
+      el("div", { class: "sd-modal-body" }, [
+        el("div", { class: "sd-track-grid" }, [
+          trackBtn("fullstack", "Full-Stack System Design",
+            "Classic services & data systems: APIs, schemas, scale, consistency, failure modes.",
+            "rate limiter · multi-tenant schema · grants intake · payment flow"),
+          trackBtn("agentic", "AI / Agentic System Design",
+            "LLM-native systems: RAG pipelines, agents, HITL, evals, retrieval at scale.",
+            "ingestion pipeline · multi-tenant RAG · agentic HITL · fine-tune vs RAG")
+        ])
+      ])
+    ]));
+    document.body.appendChild(overlay);
   }
 
   // ===========================================================================

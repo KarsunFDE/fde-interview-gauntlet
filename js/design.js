@@ -238,12 +238,12 @@
     var completed = {};
     (data.completed || []).forEach(function (id) { completed[id] = true; });
 
-    var back = el("button", { class: "btn btn--ghost", type: "button", text: "← Tracks" });
-    back.addEventListener("click", renderTrackSelect);
+    var back = el("button", { class: "btn btn--ghost", type: "button", text: "← Back" });
+    back.addEventListener("click", exit);
 
     var cards = (data.scenarios || []).map(function (sc) {
       var done = !!completed[sc.id];
-      var startBtn = el("button", { class: "btn btn--primary", type: "button", text: done ? "Practice again" : "Start (20 min)" });
+      var startBtn = el("button", { class: "btn btn--primary", type: "button", text: done ? "Practice again" : "Start (~20 min)" });
       startBtn.addEventListener("click", function () { startSession(sc); });
       return el("div", { class: "card sd-scenario-card" }, [
         el("div", { class: "sd-scenario-top" }, [
@@ -327,11 +327,11 @@
       ])
     ]);
 
-    // --- brief (collapsible, stays visible) ---
-    var brief = el("details", { class: "sd-brief-box", open: "open" }, [
-      el("summary", { text: "Client brief" }),
+    // --- brief (always visible, never collapses) ---
+    var brief = el("div", { class: "sd-brief-box" }, [
+      el("div", { class: "sd-brief-label", text: "Client brief" }),
       el("p", { class: "sd-brief-text", text: sc.clientBrief }),
-      el("p", { class: "sd-brief-hint", text: "This is deliberately vague. Ask the client questions on the right to uncover data, volume, latency, security, and success criteria before you design." })
+      el("p", { class: "sd-brief-hint", text: "Deliberately vague. Ask the client (right) about data, volume, latency, security, and success criteria before you design." })
     ]);
 
     // --- canvas ---
@@ -356,7 +356,7 @@
       chat
     ]);
 
-    root.appendChild(el("div", { class: "screen screen--wide" }, [topbar, workspace]));
+    root.appendChild(el("div", { class: "screen screen--sd" }, [topbar, workspace]));
 
     // mount Excalidraw
     var ok = mountExcalidraw(canvasMount, sc.starterScene ? safeParse(sc.starterScene) : null);
@@ -381,7 +381,6 @@
     function sendQuestion() {
       var q = (chatInput.value || "").trim();
       if (!q) { toast("Type or speak a question first.", "warn"); return; }
-      if (Date.now() > S.deadlineAt) { toast("Time's up — move to your explanation.", "warn"); return; }
       asking = true; sendBtn.disabled = true; sendBtn.textContent = "…";
       pushTurn("learner", q);
       chatInput.value = "";
@@ -396,7 +395,6 @@
           asking = false; sendBtn.disabled = false; sendBtn.textContent = "Ask";
           recMode = "typed";
           if (data && data.ok) pushTurn("client", data.answer);
-          else if (data && data.error === "time_expired") { toast("Time's up — move to your explanation.", "warn"); goExplain(); }
           else toast("The client didn't respond. Try again.", "warn");
         })
         .catch(function () {
@@ -425,16 +423,29 @@
       recorder.start();
     });
 
-    // countdown tick
+    // Soft timer — counts down to the 20-min target, then keeps counting UP into
+    // overtime with escalating gentle nudges. Never auto-submits; delivery time
+    // factors into the score, so finishing on time is rewarded, not forced.
+    var warned = {};
+    var label = countdown.previousSibling; // the "Time left" label span
     S.countdownTimer = setInterval(function () {
       var rem = S.deadlineAt - Date.now();
-      countdown.textContent = fmtClock(rem);
-      countdown.classList.toggle("is-amber", rem <= 5 * 60000 && rem > 60000);
-      countdown.classList.toggle("is-red", rem <= 60000);
-      if (rem <= 0) {
-        clearInterval(S.countdownTimer); S.countdownTimer = null;
-        toast("Time's up. Capture your explanation and submit.", "warn");
-        goExplain();
+      if (rem > 0) {
+        countdown.textContent = fmtClock(rem);
+        countdown.classList.toggle("is-amber", rem <= 5 * 60000 && rem > 60000);
+        countdown.classList.toggle("is-red", rem <= 60000);
+        if (rem <= 5 * 60000 && !warned.five) { warned.five = true; toast("5 minutes to the 20-min target — start converging on a design.", "warn"); }
+        if (rem <= 60000 && !warned.one) { warned.one = true; toast("1 minute to target. You can keep going, but time affects your score.", "warn"); }
+      } else {
+        // overtime: count up, red
+        var over = -rem;
+        if (label && label.textContent !== "Overtime") label.textContent = "Overtime";
+        countdown.classList.remove("is-amber");
+        countdown.classList.add("is-red");
+        countdown.textContent = "+" + fmtClock(over);
+        if (!warned.zero) { warned.zero = true; toast("You've hit the 20-min target. Wrap up when ready — every extra minute costs a little.", "warn"); }
+        if (over >= 5 * 60000 && !warned.over5) { warned.over5 = true; toast("5 minutes over. Time to land the design and explain it.", "warn"); }
+        if (over >= 10 * 60000 && !warned.over10) { warned.over10 = true; toast("10 minutes over — delivery-time points are maxed out. Submit soon.", "warn"); }
       }
     }, 1000);
 
@@ -567,7 +578,7 @@
       explanation: S.explanation,
       delivery: S.explanationDelivery
     }).then(function (data) {
-      if (data && data.ok) { S.submitResult = data; renderResults(data); }
+      if (data && data.ok) { S.submitResult = data; renderFollowupRound(data); }
       else { toast("Scoring failed."); renderTrackSelect(); }
     }).catch(function () { renderTrackSelect(); });
   }
@@ -581,8 +592,8 @@
     root.appendChild(el("div", { class: "screen screen--center" }, [
       el("div", { class: "card finishing-card screen-in" }, [
         el("h2", { class: "finishing-title", text: "Two experts are reviewing your design" }),
-        el("p", { class: "finishing-hint", text: "A systems-design expert and a senior FDE are scoring in parallel, then writing your feedback." }),
-        el("div", { class: "fin-steps" }, [row("Systems-design critic"), row("Senior-FDE critic"), row("Reconciling & preparing follow-ups")])
+        el("p", { class: "finishing-hint", text: "A systems-design expert and a senior FDE are scoring in parallel and preparing your adaptability round. Feedback comes after." }),
+        el("div", { class: "fin-steps" }, [row("Systems-design critic"), row("Senior-FDE critic"), row("Preparing your re-think round")])
       ])
     ]));
   }
@@ -603,43 +614,31 @@
     ]);
   }
 
-  function renderResults(data) {
+  // Post-submit: the BLIND adaptability round. Critics already ran (they
+  // generated these follow-ups) but their feedback is WITHHELD until the end —
+  // so this round tests genuine live adaptation, not patching what they were told.
+  function renderFollowupRound(data) {
     cleanup();
     var root = appRoot();
     clear(root);
-    var d = data.dims || {};
+    S.submitResult = data; // stash feedback to merge into the final screen
 
-    var hero = el("div", { class: "card results-card screen-in" }, [
-      el("h1", { class: "results-title", text: "Design reviewed" }),
-      el("div", { class: "results-score" }, [
-        el("span", { class: "score-num score-num--xl", text: String(typeof data.scorePre === "number" ? data.scorePre : 0) }),
-        el("span", { class: "score-den score-den--xl", text: "/100" })
-      ]),
-      el("p", { class: "sd-prelim", text: "Preliminary — your final score includes the adaptability round below." })
+    var intro = el("div", { class: "card results-card screen-in" }, [
+      el("h1", { class: "results-title", text: "Design submitted — one more round" }),
+      el("p", { class: "sd-prelim", text: "Two critics reviewed your design. Before you see their feedback, the ground shifts: answer the follow-ups below out loud, reworking your design live. Your full scores + feedback unlock right after." })
     ]);
 
-    var dims = el("div", { class: "card sd-dims-panel" }, [
-      el("h2", { class: "panel-title", text: "Scores" }),
-      dimBar("Completeness", d.completeness),
-      dimBar("Design quality", d.design_quality),
-      dimBar("Scoping (your clarifying questions)", d.scoping),
-      dimBar("Deliverability (the WHY)", d.deliverability)
-    ]);
+    var diagram = S._scenePng
+      ? el("div", { class: "card sd-fu-diagram" }, [
+          el("h4", { class: "ov-h", text: "Your design (for reference)" }),
+          el("img", { class: "sd-explain-thumb", src: S._scenePng, alt: "Your diagram" })
+        ])
+      : null;
 
-    var fbChildren = [el("h2", { class: "panel-title", text: "Two-critic feedback" })];
-    if (data.summary) fbChildren.push(el("p", { class: "ov-summary", text: data.summary }));
-    var ts = bullets("What you did well", data.topStrengths, "is-good");
-    var fa = bullets("Focus areas", data.focusAreas, "is-warn");
-    var mq = bullets("Questions you should have asked", data.questionsYouShouldHaveAsked, "is-warn");
-    var ai = bullets("Actionable next time", data.actionableItems, "is-good");
-    [ts, fa, mq, ai].forEach(function (x) { if (x) fbChildren.push(x); });
-    var fbPanel = el("div", { class: "card overall-panel" }, fbChildren);
-
-    // ---- follow-ups (the re-think drill) ----
     var followups = data.followups || [];
     var fuPanel = el("div", { class: "card sd-followup-panel" }, [
       el("h2", { class: "panel-title", text: "Re-think your design (adaptability round)" }),
-      el("p", { class: "sd-fu-hint", text: "The ground just shifted. Answer each out loud — rework your design live and narrate the tradeoff. This is scored for adaptability and folded into your final score." })
+      el("p", { class: "sd-fu-hint", text: "Answer each out loud — rework your design live and narrate the tradeoff. Scored for adaptability and folded into your final score." })
     ]);
     var fuStateEls = [];
     followups.forEach(function (fu, i) {
@@ -653,13 +652,13 @@
       recBtn.addEventListener("click", function () { recordFollowup(i, fu, fuStateEls[i]); });
       fuPanel.appendChild(box);
     });
-    var finalizeBtn = el("button", { class: "btn btn--primary btn--lg", type: "button", text: "Submit follow-ups & see final score" });
+    var finalizeBtn = el("button", { class: "btn btn--primary btn--lg", type: "button", text: "Submit & reveal my feedback" });
     finalizeBtn.addEventListener("click", function () { finalizeFollowups(followups, finalizeBtn); });
     fuPanel.appendChild(el("div", { class: "sd-fu-finalize" }, [finalizeBtn]));
 
     S.followAnswers = followups.map(function (fu) { return { question: fu.question, transcript: "", delivery: null }; });
 
-    var main = el("div", { class: "results-main" }, [hero, dims, fbPanel, fuPanel]);
+    var main = el("div", { class: "results-main" }, [intro, fuPanel, diagram]);
     root.appendChild(el("div", { class: "screen screen--wide" }, [main]));
   }
 
@@ -724,44 +723,82 @@
   function finalizeFollowups(followups, btn) {
     var unanswered = S.followAnswers.filter(function (a) { return !a.transcript; }).length;
     if (unanswered && !window.confirm(unanswered + " follow-up(s) unanswered — adaptability will score low. Finalize anyway?")) return;
-    if (btn) { btn.disabled = true; btn.textContent = "Scoring adaptability…"; }
+    if (btn) { btn.disabled = true; btn.textContent = "Scoring & revealing…"; }
     window.API.designFollowup(S.sessionId, S.followAnswers)
       .then(function (data) {
-        if (data && data.ok) renderFinal(data);
-        else { toast("Could not finalize."); if (btn) { btn.disabled = false; btn.textContent = "Submit follow-ups & see final score"; } }
+        if (data && data.ok) renderResults(data);
+        else { toast("Could not finalize."); if (btn) { btn.disabled = false; btn.textContent = "Submit & reveal my feedback"; } }
       })
-      .catch(function () { if (btn) { btn.disabled = false; btn.textContent = "Submit follow-ups & see final score"; } });
+      .catch(function () { if (btn) { btn.disabled = false; btn.textContent = "Submit & reveal my feedback"; } });
   }
 
-  function renderFinal(data) {
+  // FINAL screen — everything unlocks here (after the blind adaptability round):
+  // final score, all five dimensions, two-critic feedback, delivery-time.
+  function renderResults(data) {
+    cleanup();
     var root = appRoot();
     clear(root);
+    var d = data.dims || {};
+
     var badge = data.personalBestToday ? el("div", { class: "best-badge", text: "⭐ Personal best today!" }) : null;
     var rank = typeof data.rankToday === "number" ? el("p", { class: "rank-line" }, ["Today's System Design rank: ", el("strong", { text: "#" + data.rankToday })]) : null;
     var practice = (S.tier === "practice") ? el("p", { class: "mic-note", text: "Practice mode — not posted to the board." }) : null;
 
+    var hero = el("div", { class: "card results-card screen-in" }, [
+      el("h1", { class: "results-title", text: "Design complete" }),
+      el("div", { class: "results-score" }, [
+        el("span", { class: "score-num score-num--xl", text: String(typeof data.finalScore === "number" ? data.finalScore : 0) }),
+        el("span", { class: "score-den score-den--xl", text: "/100" })
+      ]),
+      badge, rank, practice
+    ]);
+
+    var dims = el("div", { class: "card sd-dims-panel" }, [
+      el("h2", { class: "panel-title", text: "Scores" }),
+      dimBar("Completeness", d.completeness),
+      dimBar("Design quality (resilience, not happy-path)", d.design_quality),
+      dimBar("Scoping (your clarifying questions)", d.scoping),
+      dimBar("Deliverability (the WHY)", d.deliverability),
+      dimBar("Adaptability (the re-think round)", d.adaptability)
+    ]);
+
+    // delivery-time + adaptability notes
+    var notes = [];
+    if (data.adaptabilityNote) {
+      notes.push(el("div", { class: "sd-adapt" }, [
+        el("span", { class: "sd-adapt__label", text: "Adaptability" }),
+        el("span", { class: "sd-adapt__val", text: String(data.adaptability) + "/100" }),
+        el("p", { class: "sd-adapt__note", text: data.adaptabilityNote })
+      ]));
+    }
+    if (typeof data.elapsedMin === "number") {
+      var tp = typeof data.timePenalty === "number" ? data.timePenalty : 0;
+      var tgt = typeof data.timeTarget === "number" ? data.timeTarget : 20;
+      notes.push(el("div", { class: "sd-adapt" }, [
+        el("span", { class: "sd-adapt__label", text: "Delivery time" }),
+        el("span", { class: "sd-adapt__val", text: data.elapsedMin + " min (target " + tgt + ")" }),
+        el("p", { class: "sd-adapt__note", text: tp > 0 ? ("−" + tp + " pts for running over the target. Tighter scoping next time.") : "On target — no time penalty. Nicely paced." })
+      ]));
+    }
+    var notesPanel = notes.length ? el("div", { class: "card sd-dims-panel" }, notes) : null;
+
+    var fbChildren = [el("h2", { class: "panel-title", text: "Two-critic feedback" })];
+    if (data.summary) fbChildren.push(el("p", { class: "ov-summary", text: data.summary }));
+    var ts = bullets("What you did well", data.topStrengths, "is-good");
+    var fa = bullets("Focus areas", data.focusAreas, "is-warn");
+    var mq = bullets("Questions you should have asked", data.questionsYouShouldHaveAsked, "is-warn");
+    var ai = bullets("Actionable next time", data.actionableItems, "is-good");
+    [ts, fa, mq, ai].forEach(function (x) { if (x) fbChildren.push(x); });
+    var fbPanel = el("div", { class: "card overall-panel" }, fbChildren);
+
     var toBoards = el("button", { class: "btn btn--primary", type: "button", text: "View leaderboards" });
     toBoards.addEventListener("click", function () { renderBoards(); });
     var again = el("button", { class: "btn", type: "button", text: "Another scenario" });
-    again.addEventListener("click", renderTrackSelect);
+    again.addEventListener("click", exit);
 
-    root.appendChild(el("div", { class: "screen screen--center" }, [
-      el("div", { class: "card results-card screen-in" }, [
-        el("h1", { class: "results-title", text: "Final score" }),
-        el("div", { class: "results-score" }, [
-          el("span", { class: "score-num score-num--xl", text: String(typeof data.finalScore === "number" ? data.finalScore : 0) }),
-          el("span", { class: "score-den score-den--xl", text: "/100" })
-        ]),
-        badge, rank,
-        el("div", { class: "sd-adapt" }, [
-          el("span", { class: "sd-adapt__label", text: "Adaptability" }),
-          el("span", { class: "sd-adapt__val", text: String(data.adaptability) + "/100" }),
-          data.adaptabilityNote ? el("p", { class: "sd-adapt__note", text: data.adaptabilityNote }) : null
-        ]),
-        practice,
-        el("div", { class: "results-actions" }, [toBoards, again])
-      ])
-    ]));
+    var main = el("div", { class: "results-main" }, [hero, dims, notesPanel, fbPanel,
+      el("div", { class: "results-actions" }, [toBoards, again])]);
+    root.appendChild(el("div", { class: "screen screen--wide" }, [main]));
   }
 
   // =====================================================================
@@ -938,6 +975,13 @@
       S.name = creds.name; S.passcode = creds.passcode; S.tier = creds.tier || null;
       S.onExit = onExit || null;
       renderTrackSelect();
+    },
+    // Direct entry to a chosen track (skips the full-page track screen — the
+    // hub picks the track via a modal, so we jump straight to scenarios).
+    openTrack: function (creds, track, onExit) {
+      S.name = creds.name; S.passcode = creds.passcode; S.tier = creds.tier || null;
+      S.onExit = onExit || null;
+      loadScenarios(track === "agentic" ? "agentic" : "fullstack");
     },
     boards: function (creds, onExit) {
       S.name = creds.name; S.passcode = creds.passcode; S.tier = creds.tier || null;

@@ -459,9 +459,9 @@ html, body {
 
 /* mode/track cards */
 .sd-track-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.sd-track-card { text-align: left; cursor: pointer; transition: transform .15s, border-color .15s, box-shadow .15s; }
+.sd-track-card { color: var(--text); text-align: left; cursor: pointer; transition: transform .15s, border-color .15s, box-shadow .15s; }
 .sd-track-card:hover { transform: translateY(-3px); border-color: rgba(45,212,191,.5); box-shadow: var(--shadow); }
-.sd-track-title { margin: 0 0 8px; font-size: 1.25rem; }
+.sd-track-title { color: var(--text); margin: 0 0 8px; font-size: 1.25rem; }
 .sd-track-blurb { color: var(--muted); margin: 0 0 10px; line-height: 1.5; }
 .sd-track-eg { color: var(--accent); font-size: .82rem; font-weight: 600; margin: 0; }
 @media (max-width: 760px) { .sd-track-grid { grid-template-columns: 1fr; } }
@@ -491,18 +491,22 @@ html, body {
 .sd-countdown.is-amber { color: var(--amber); }
 .sd-countdown.is-red { color: var(--bad); }
 
-.sd-workspace { display: grid; grid-template-columns: 1fr 360px; gap: 14px; align-items: stretch; }
-.sd-canvas-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.sd-brief-box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 14px; }
-.sd-brief-box summary { cursor: pointer; font-weight: 700; color: var(--accent); }
-.sd-brief-text { color: var(--text); margin: 8px 0 6px; line-height: 1.5; }
+/* Use most of the viewport width for the workspace (kills the dead side room),
+   and fix the row height so the canvas and chat are the SAME height with their
+   bottoms aligned. */
+.screen--sd { max-width: min(1680px, 96vw); }
+.sd-workspace { display: grid; grid-template-columns: 1fr 440px; gap: 18px; align-items: stretch; height: calc(100vh - 200px); min-height: 540px; }
+.sd-canvas-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; }
+.sd-brief-box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 16px; flex: 0 0 auto; }
+.sd-brief-label { font-weight: 700; color: var(--accent); font-size: .9rem; margin-bottom: 6px; }
+.sd-brief-text { color: var(--text); margin: 0 0 6px; line-height: 1.5; }
 .sd-brief-hint { color: var(--faint); font-size: .85rem; margin: 0; }
-.sd-canvas { height: 64vh; min-height: 440px; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; position: relative; background: #fff; }
+.sd-canvas { flex: 1 1 auto; min-height: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; position: relative; background: #fff; }
 .sd-canvas .excalidraw { height: 100%; }
 .sd-canvas-fallback { padding: 24px; color: var(--warn); }
 
-/* clarify chat */
-.sd-chat { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); height: calc(64vh + 56px); min-height: 496px; }
+/* clarify chat — fills its grid cell so its bottom aligns with the canvas bottom */
+.sd-chat { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); height: 100%; min-height: 0; }
 .sd-chat-head { padding: 12px 14px; border-bottom: 1px solid var(--line); font-weight: 700; color: var(--accent); font-size: .9rem; }
 .sd-chat-log { flex: 1 1 auto; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
 .sd-chat-sys { color: var(--faint); font-size: .82rem; line-height: 1.45; font-style: italic; }
@@ -518,7 +522,11 @@ html, body {
 .sd-chat-btns { display: flex; flex-direction: column; gap: 6px; }
 .sd-mic.is-rec { color: var(--bad); border-color: var(--bad); }
 .sd-send { padding: 9px 14px; }
-@media (max-width: 900px) { .sd-workspace { grid-template-columns: 1fr; } .sd-chat { height: 360px; min-height: 0; } .sd-canvas { height: 52vh; } }
+@media (max-width: 900px) {
+  .sd-workspace { grid-template-columns: 1fr; height: auto; min-height: 0; }
+  .sd-canvas { flex: 0 0 auto; height: 52vh; min-height: 380px; }
+  .sd-chat { height: 380px; }
+}
 
 /* explanation */
 .sd-explain-hint { color: var(--muted); line-height: 1.55; margin: 0 0 14px; }
@@ -584,3 +592,13 @@ html, body {
 .trainer-sess__scn { color: var(--muted); }
 .trainer-sess__date { color: var(--faint); font-size: .82rem; margin-left: auto; }
 .trainer-sess__dims { color: var(--muted); font-size: .84rem; margin: 8px 0; font-variant-numeric: tabular-nums; }
+
+/* track-picker modal (System Design entry — one click, one choice) */
+.sd-track-modal { max-width: 860px; }
+.sd-track-modal .sd-modal-head { align-items: center; }
+.sd-track-modal .sd-track-card { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 18px; }
+@media (max-width: 680px) { .sd-track-modal .sd-track-grid { grid-template-columns: 1fr; } }
+
+/* follow-up round: diagram-for-reference card */
+.sd-fu-diagram { margin-top: 16px; }
+.sd-fu-diagram .sd-explain-thumb { margin: 8px 0 0; }
