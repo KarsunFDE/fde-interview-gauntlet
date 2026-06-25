@@ -476,7 +476,7 @@
     });
   }
 
-  var EXPLAIN_MAX_MS = 150000; // 2:30 for the design narration
+  var EXPLAIN_MAX_MS = 600000; // 10:00 for the design narration
   function renderExplain() {
     unmountExcalidraw();
     if (window.STT && window.STT.tts) window.STT.tts.cancel();
@@ -501,7 +501,7 @@
       recBtn.addEventListener("click", renderRecording);
       var typeBtn = el("button", { class: "btn btn--ghost", type: "button", text: "Type instead" });
       typeBtn.addEventListener("click", function () { renderReview("", "typed"); });
-      stage.appendChild(el("div", { class: "ready-block" }, [recBtn, el("p", { class: "answer-guidance", text: "Up to 2:30. You'll review the transcript before submitting." }), supported ? typeBtn : null]));
+      stage.appendChild(el("div", { class: "ready-block" }, [recBtn, el("p", { class: "answer-guidance", text: "Up to 10 minutes. You'll review the transcript before submitting." }), supported ? typeBtn : null]));
       if (!supported) renderReview("", "typed");
     }
     function renderRecording() {
@@ -541,7 +541,7 @@
     }
     function renderReview(transcript, mode) {
       clear(stage);
-      var ta = el("textarea", { class: "transcript", rows: "7", maxlength: "3000", placeholder: "Your explanation…" });
+      var ta = el("textarea", { class: "transcript", rows: "7", maxlength: "12000", placeholder: "Your explanation…" });
       ta.value = transcript || "";
       var submitBtn = el("button", { class: "btn btn--primary", type: "button", text: "Submit design for review" });
       submitBtn.addEventListener("click", function () {
