@@ -181,6 +181,24 @@
       throw e;
     });
   }
+  function designHistory(name, passcode) {
+    return post("/design/history", { name: name, passcode: passcode }).catch(function (e) {
+      toast(e.message || "Could not load your past designs.");
+      throw e;
+    });
+  }
+  function designReport(name, passcode, sessionId) {
+    return post("/design/report", { name: name, passcode: passcode, sessionId: sessionId }).catch(function (e) {
+      toast(e.message || "Could not load that report.");
+      throw e;
+    });
+  }
+  function trainerSession(trainerPasscode, sessionId) {
+    return post("/trainer/session", { trainerPasscode: trainerPasscode, sessionId: sessionId }).catch(function (e) {
+      toast(e.message || "Could not load that report.");
+      throw e;
+    });
+  }
 
   window.API = {
     session: session,
@@ -197,6 +215,9 @@
     designFollowup: designFollowup,
     designSessionView: designSessionView,
     designLeaderboard: designLeaderboard,
-    trainerReport: trainerReport
+    trainerReport: trainerReport,
+    designHistory: designHistory,
+    designReport: designReport,
+    trainerSession: trainerSession
   };
 })();

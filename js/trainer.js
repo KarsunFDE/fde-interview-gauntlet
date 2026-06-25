@@ -146,6 +146,9 @@
         list("Focus areas", s.focusAreas, "is-warn");
         list("Questions they missed", s.questionsMissed, "is-warn");
         list("Actionable items", s.actionableItems, "is-good");
+        var full = el("button", { class: "btn", type: "button", text: "📄 View full report (diagram, explanation, transcript)" });
+        full.addEventListener("click", function () { openFullReport(s.id, full); });
+        det.appendChild(el("div", { class: "trainer-sess__actions" }, [full]));
         detail.appendChild(det);
       });
     }
@@ -154,6 +157,30 @@
       el("div", { class: "board-head" }, [el("h1", { class: "board-title", text: "Trainer Reports — System Design" }), el("div", { class: "board-head__actions" }, [refresh, back])]),
       summary, usage, detail
     ]));
+  }
+
+  // Full report drill-down (trainer): fetch any session, render the shared
+  // report node in a modal with a PDF button.
+  function openFullReport(sessionId, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = "Loading…"; }
+    window.API.trainerSession(T.passcode, sessionId).then(function (data) {
+      if (btn) { btn.disabled = false; btn.textContent = "📄 View full report (diagram, explanation, transcript)"; }
+      if (!data || !data.ok) { window.showToast("Could not load that report."); return; }
+      var r = data.report;
+      var overlay = el("div", { class: "sd-modal-overlay" });
+      var close = el("button", { class: "btn btn--ghost sd-modal-close", type: "button", text: "✕ Close" });
+      close.addEventListener("click", function () { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); });
+      var pdf = el("button", { class: "btn btn--primary", type: "button", text: "⬇ PDF" });
+      pdf.addEventListener("click", function () { if (window.DESIGN && window.DESIGN.downloadPdf) window.DESIGN.downloadPdf(r); });
+      var body = el("div", { class: "sd-modal-body" });
+      if (window.DESIGN && window.DESIGN.buildReportNode) body.appendChild(window.DESIGN.buildReportNode(r));
+      else body.appendChild(el("p", { text: "Report view unavailable." }));
+      overlay.appendChild(el("div", { class: "sd-modal sd-report-modal" }, [
+        el("div", { class: "sd-modal-head" }, [pdf, close]), body
+      ]));
+      overlay.addEventListener("click", function (e) { if (e.target === overlay) overlay.parentNode.removeChild(overlay); });
+      document.body.appendChild(overlay);
+    }).catch(function () { if (btn) { btn.disabled = false; btn.textContent = "📄 View full report (diagram, explanation, transcript)"; } });
   }
 
   window.TRAINER = {

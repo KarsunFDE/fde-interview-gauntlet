@@ -791,13 +791,30 @@
     [ts, fa, mq, ai].forEach(function (x) { if (x) fbChildren.push(x); });
     var fbPanel = el("div", { class: "card overall-panel" }, fbChildren);
 
-    var toBoards = el("button", { class: "btn btn--primary", type: "button", text: "View leaderboards" });
+    // Assemble a full report object (finalize payload + this session's artifacts) for the PDF.
+    var report = {
+      name: S.name, tier: S.tier, track: S.track,
+      scenarioTitle: S.scenario ? S.scenario.title : "Design",
+      date: (function () { var x = new Date(); var p = function (n) { return String(n).padStart(2, "0"); }; return x.getFullYear() + "-" + p(x.getMonth() + 1) + "-" + p(x.getDate()); })(),
+      overall: data.finalScore, dims: d,
+      summary: data.summary, topStrengths: data.topStrengths, focusAreas: data.focusAreas,
+      questionsYouShouldHaveAsked: data.questionsYouShouldHaveAsked, actionableItems: data.actionableItems,
+      adaptabilityNote: data.adaptabilityNote, elapsedMin: data.elapsedMin, timePenalty: data.timePenalty,
+      followups: S.followAnswers, scenePng: S._scenePng, explanation: S.explanation,
+      clarify: S.clarify, clarifyCount: (S.clarify || []).filter(function (c) { return c.role === "learner"; }).length
+    };
+
+    var pdfBtn = el("button", { class: "btn btn--primary", type: "button", text: "⬇ Download PDF" });
+    pdfBtn.addEventListener("click", function () { downloadPdf(report); });
+    var toBoards = el("button", { class: "btn", type: "button", text: "Leaderboards" });
     toBoards.addEventListener("click", function () { renderBoards(); });
+    var hist = el("button", { class: "btn", type: "button", text: "My past designs" });
+    hist.addEventListener("click", renderHistory);
     var again = el("button", { class: "btn", type: "button", text: "Another scenario" });
     again.addEventListener("click", exit);
 
     var main = el("div", { class: "results-main" }, [hero, dims, notesPanel, fbPanel,
-      el("div", { class: "results-actions" }, [toBoards, again])]);
+      el("div", { class: "results-actions" }, [pdfBtn, toBoards, hist, again])]);
     root.appendChild(el("div", { class: "screen screen--wide" }, [main]));
   }
 
@@ -968,6 +985,166 @@
   }
 
   // =====================================================================
+  // Full report — shared DOM node (used by learner history + trainer) + PDF
+  // =====================================================================
+  function buildReportNode(r) {
+    var d = r.dims || {};
+    var node = el("div", { class: "results-main" });
+
+    node.appendChild(el("div", { class: "card results-card" }, [
+      el("h1", { class: "results-title", text: r.scenarioTitle || "Design report" }),
+      el("div", { class: "sd-report-meta" }, [
+        r.name ? el("span", { text: r.name }) : null,
+        r.tier ? el("span", { class: "tier-pill", text: r.tier }) : null,
+        r.track ? el("span", { class: "sd-chip", text: r.track === "agentic" ? "AI / Agentic" : "Full-Stack" }) : null,
+        r.date ? el("span", { class: "sd-report-date", text: r.date }) : null
+      ]),
+      el("div", { class: "results-score" }, [
+        el("span", { class: "score-num score-num--xl", text: String(typeof r.overall === "number" ? r.overall : 0) }),
+        el("span", { class: "score-den score-den--xl", text: "/100" })
+      ])
+    ]));
+
+    node.appendChild(el("div", { class: "card sd-dims-panel" }, [
+      el("h2", { class: "panel-title", text: "Scores" }),
+      dimBar("Completeness", d.completeness),
+      dimBar("Design quality (resilience, not happy-path)", d.design_quality),
+      dimBar("Scoping (your clarifying questions)", d.scoping),
+      dimBar("Deliverability (the WHY)", d.deliverability),
+      dimBar("Adaptability (the re-think round)", d.adaptability)
+    ]));
+
+    var notes = [];
+    if (r.adaptabilityNote) notes.push(el("div", { class: "sd-adapt" }, [el("span", { class: "sd-adapt__label", text: "Adaptability" }), el("span", { class: "sd-adapt__val", text: String(d.adaptability) + "/100" }), el("p", { class: "sd-adapt__note", text: r.adaptabilityNote })]));
+    if (typeof r.elapsedMin === "number") { var tp = r.timePenalty || 0; notes.push(el("div", { class: "sd-adapt" }, [el("span", { class: "sd-adapt__label", text: "Delivery time" }), el("span", { class: "sd-adapt__val", text: r.elapsedMin + " min (target 20)" }), el("p", { class: "sd-adapt__note", text: tp > 0 ? ("−" + tp + " pts over target") : "On target" })])); }
+    if (notes.length) node.appendChild(el("div", { class: "card sd-dims-panel" }, notes));
+
+    var fb = [el("h2", { class: "panel-title", text: "Two-critic feedback" })];
+    if (r.summary) fb.push(el("p", { class: "ov-summary", text: r.summary }));
+    [bullets("What you did well", r.topStrengths, "is-good"), bullets("Focus areas", r.focusAreas, "is-warn"),
+     bullets("Questions you should have asked", r.questionsYouShouldHaveAsked, "is-warn"), bullets("Actionable next time", r.actionableItems, "is-good")
+    ].forEach(function (x) { if (x) fb.push(x); });
+    node.appendChild(el("div", { class: "card overall-panel" }, fb));
+
+    // adaptability follow-ups Q&A
+    if (r.followups && r.followups.length) {
+      var fuChildren = [el("h2", { class: "panel-title", text: "Adaptability round" })];
+      r.followups.forEach(function (f, i) {
+        fuChildren.push(el("div", { class: "sd-report-fu" }, [
+          el("p", { class: "sd-fu-q" }, [el("span", { class: "sd-fu-n", text: "#" + (i + 1) }), el("span", { text: f.question })]),
+          el("blockquote", { class: "sd-modal-explain", text: f.transcript || "(no response)" })
+        ]));
+      });
+      node.appendChild(el("div", { class: "card overall-panel" }, fuChildren));
+    }
+
+    // diagram + explanation + clarify transcript
+    var artifacts = [el("h2", { class: "panel-title", text: "Your work" })];
+    if (r.scenePng) artifacts.push(el("img", { class: "sd-modal-diagram", src: r.scenePng, alt: "diagram" }));
+    if (r.explanation) { artifacts.push(el("h4", { class: "ov-h", text: "Your spoken explanation" })); artifacts.push(el("blockquote", { class: "sd-modal-explain", text: r.explanation })); }
+    if (r.clarify && r.clarify.length) {
+      artifacts.push(el("h4", { class: "ov-h", text: "Clarifying questions (" + (r.clarifyCount || 0) + ")" }));
+      r.clarify.forEach(function (c) {
+        artifacts.push(el("p", { class: "sd-report-clarify sd-report-clarify--" + c.role }, [el("strong", { text: (c.role === "client" ? "Client: " : "You: ") }), c.text]));
+      });
+    }
+    node.appendChild(el("div", { class: "card overall-panel" }, artifacts));
+    return node;
+  }
+
+  function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function buildReportHtml(r) {
+    var d = r.dims || {};
+    function list(items) { return (items && items.length) ? "<ul>" + items.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul>" : ""; }
+    function dimrow(l, v) { return "<tr><td>" + esc(l) + "</td><td class='n'>" + (v == null ? "—" : v) + "</td></tr>"; }
+    var fuHtml = (r.followups || []).map(function (f, i) { return "<div class='fu'><p class='q'>#" + (i + 1) + " " + esc(f.question) + "</p><blockquote>" + esc(f.transcript || "(no response)") + "</blockquote></div>"; }).join("");
+    var clarifyHtml = (r.clarify || []).map(function (c) { return "<p class='cl'><b>" + (c.role === "client" ? "Client: " : "You: ") + "</b>" + esc(c.text) + "</p>"; }).join("");
+    var css = "body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1a1f2e;margin:0;padding:30px;line-height:1.55}.r{max-width:760px;margin:0 auto}h1{font-size:1.5rem;margin:0 0 4px}.meta{color:#555;font-size:.9rem;border-bottom:2px solid #e5e7eb;padding-bottom:10px;margin-bottom:16px}.score{font-size:2.2rem;font-weight:800;color:#0d9488}h2{font-size:1.15rem;border-bottom:1px solid #e5e7eb;padding-bottom:4px;margin:22px 0 8px}h3{font-size:1rem;margin:12px 0 4px}.good{color:#15803d}.warn{color:#b45309}table{width:100%;border-collapse:collapse}td{padding:4px 0;border-bottom:1px solid #f0f0f0}.n{text-align:right;font-weight:700;color:#0d9488}ul{margin:4px 0 8px;padding-left:20px}blockquote{margin:6px 0;padding:6px 12px;border-left:3px solid #0d9488;background:#f8fafc;white-space:pre-wrap}.fu .q{font-weight:600;margin:8px 0 2px}.cl{margin:3px 0;font-size:.92rem}img{max-width:100%;border:1px solid #e5e7eb;border-radius:8px}@media print{body{padding:0}a{display:none}}";
+    return "<!DOCTYPE html><html><head><meta charset='utf-8'/><title>FDE Design — " + esc(r.scenarioTitle) + "</title><style>" + css + "</style></head><body><div class='r'>" +
+      "<p class='meta'>⚡ FDE System Design · " + esc(r.name || "") + " · " + esc(r.date || "") + " · " + esc(r.track === "agentic" ? "AI/Agentic" : "Full-Stack") + "</p>" +
+      "<h1>" + esc(r.scenarioTitle || "Design report") + "</h1>" +
+      "<p class='score'>" + (r.overall == null ? "—" : r.overall) + " / 100</p>" +
+      "<h2>Scores</h2><table>" + dimrow("Completeness", d.completeness) + dimrow("Design quality (resilience)", d.design_quality) + dimrow("Scoping", d.scoping) + dimrow("Deliverability (the WHY)", d.deliverability) + dimrow("Adaptability", d.adaptability) + "</table>" +
+      (typeof r.elapsedMin === "number" ? "<p><b>Delivery time:</b> " + r.elapsedMin + " min (target 20)" + (r.timePenalty ? ", −" + r.timePenalty + " pts" : "") + "</p>" : "") +
+      "<h2>Feedback</h2>" + (r.summary ? "<p>" + esc(r.summary) + "</p>" : "") +
+      (r.topStrengths && r.topStrengths.length ? "<h3 class='good'>What you did well</h3>" + list(r.topStrengths) : "") +
+      (r.focusAreas && r.focusAreas.length ? "<h3 class='warn'>Focus areas</h3>" + list(r.focusAreas) : "") +
+      (r.questionsYouShouldHaveAsked && r.questionsYouShouldHaveAsked.length ? "<h3 class='warn'>Questions you should have asked</h3>" + list(r.questionsYouShouldHaveAsked) : "") +
+      (r.actionableItems && r.actionableItems.length ? "<h3 class='good'>Actionable next time</h3>" + list(r.actionableItems) : "") +
+      (fuHtml ? "<h2>Adaptability round</h2>" + fuHtml : "") +
+      (r.scenePng ? "<h2>Your diagram</h2><img src='" + r.scenePng + "'/>" : "") +
+      (r.explanation ? "<h2>Your explanation</h2><blockquote>" + esc(r.explanation) + "</blockquote>" : "") +
+      (clarifyHtml ? "<h2>Clarifying questions</h2>" + clarifyHtml : "") +
+      "</div></body></html>";
+  }
+  function downloadPdf(r) {
+    var html = buildReportHtml(r);
+    var win = null; try { win = window.open("", "_blank"); } catch (e) { win = null; }
+    if (win && win.document) { win.document.open(); win.document.write(html); win.document.close(); setTimeout(function () { try { win.focus(); win.print(); } catch (e) {} }, 350); return; }
+    try {
+      var blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var safe = (r.scenarioTitle || "design").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+      var a = el("a", { href: url, download: "fde-design-" + safe + "-" + (r.date || "") + ".html" });
+      document.body.appendChild(a); a.click();
+      setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+      toast("Allow popups to save as PDF, or open the downloaded file and print.", "warn");
+    } catch (e) { toast("Could not generate the download."); }
+  }
+
+  // Full-screen report (learner clicking into their own history).
+  function renderReportScreen(report, backFn) {
+    cleanup();
+    var root = appRoot();
+    clear(root);
+    var back = el("button", { class: "btn btn--ghost", type: "button", text: "← Back" });
+    back.addEventListener("click", backFn || renderHistory);
+    var pdf = el("button", { class: "btn btn--primary", type: "button", text: "⬇ Download PDF" });
+    pdf.addEventListener("click", function () { downloadPdf(report); });
+    root.appendChild(el("div", { class: "screen screen--wide" }, [
+      el("div", { class: "board-head" }, [el("h1", { class: "board-title", text: "Design report" }), el("div", { class: "board-head__actions" }, [pdf, back])]),
+      buildReportNode(report)
+    ]));
+  }
+
+  // Learner history list.
+  function renderHistory() {
+    cleanup();
+    var root = appRoot();
+    clear(root);
+    var back = el("button", { class: "btn btn--ghost", type: "button", text: "← Back" });
+    back.addEventListener("click", exit);
+    var mount = el("div", { id: "historyMount" }, [el("div", { class: "loading", text: "Loading your past designs…" })]);
+    root.appendChild(el("div", { class: "screen" }, [
+      el("div", { class: "board-head" }, [el("h1", { class: "board-title", text: "My past designs" }), back]),
+      mount
+    ]));
+    window.API.designHistory(S.name, S.passcode).then(function (data) {
+      clear(mount);
+      var rows = (data && data.sessions) || [];
+      if (!rows.length) { mount.appendChild(el("p", { class: "empty", text: "No finalized designs yet. Run one and it'll show up here." })); return; }
+      rows.forEach(function (s) {
+        var open = el("button", { class: "btn", type: "button", text: "View report" });
+        open.addEventListener("click", function () {
+          open.disabled = true; open.textContent = "Loading…";
+          window.API.designReport(S.name, S.passcode, s.id).then(function (rd) {
+            if (rd && rd.ok) renderReportScreen(rd.report, renderHistory);
+            else { open.disabled = false; open.textContent = "View report"; }
+          }).catch(function () { open.disabled = false; open.textContent = "View report"; });
+        });
+        mount.appendChild(el("div", { class: "card sd-history-row" }, [
+          el("span", { class: "sd-history-score", text: String(s.overall) }),
+          el("div", { class: "sd-history-meta" }, [
+            el("div", { class: "sd-history-title", text: s.scenarioTitle }),
+            el("div", { class: "sd-history-sub", text: s.date + " · " + (s.track === "agentic" ? "AI/Agentic" : "Full-Stack") })
+          ]),
+          open
+        ]));
+      });
+    }).catch(function () { clear(mount); mount.appendChild(el("p", { class: "loading", text: "Could not load." })); });
+  }
+
+  // =====================================================================
   // Public entry points
   // =====================================================================
   window.DESIGN = {
@@ -987,6 +1164,14 @@
       S.name = creds.name; S.passcode = creds.passcode; S.tier = creds.tier || null;
       S.onExit = onExit || null;
       renderBoards();
-    }
+    },
+    history: function (creds, onExit) {
+      S.name = creds.name; S.passcode = creds.passcode; S.tier = creds.tier || null;
+      S.onExit = onExit || null;
+      renderHistory();
+    },
+    // For trainer.js reuse: build a report DOM node + trigger a PDF.
+    buildReportNode: buildReportNode,
+    downloadPdf: downloadPdf
   };
 })();

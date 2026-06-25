@@ -300,6 +300,8 @@
 
     var boardsBtn = el("button", { class: "btn btn--primary", type: "button", text: "🏆 Leaderboards" });
     boardsBtn.addEventListener("click", function () { window.DESIGN.boards(creds(), renderModeSelect); });
+    var historyBtn = el("button", { class: "btn", type: "button", text: "My past designs" });
+    historyBtn.addEventListener("click", function () { window.DESIGN.history(creds(), renderModeSelect); });
     var trainerBtn = el("button", { class: "btn btn--ghost", type: "button", text: "Trainer reports" });
     trainerBtn.addEventListener("click", function () { window.TRAINER.open(renderModeSelect); });
 
@@ -313,7 +315,7 @@
       ]),
       el("p", { class: "sd-sub", text: "Pick your arena." }),
       el("div", { class: "sd-track-grid" }, [interviewCard, designCard]),
-      el("div", { class: "mode-actions" }, [boardsBtn, trainerBtn])
+      el("div", { class: "mode-actions" }, [boardsBtn, historyBtn, trainerBtn])
     ]));
   }
 

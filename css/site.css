@@ -602,3 +602,19 @@ html, body {
 /* follow-up round: diagram-for-reference card */
 .sd-fu-diagram { margin-top: 16px; }
 .sd-fu-diagram .sd-explain-thumb { margin: 8px 0 0; }
+
+/* learner history + report */
+.sd-history-row { display: flex; align-items: center; gap: 16px; margin-bottom: 10px; padding: 14px 18px; }
+.sd-history-score { font-size: 1.5rem; font-weight: 800; color: var(--accent); min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
+.sd-history-meta { flex: 1 1 auto; min-width: 0; }
+.sd-history-title { font-weight: 700; }
+.sd-history-sub { color: var(--faint); font-size: .85rem; }
+.sd-report-meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; color: var(--muted); margin: 6px 0 10px; font-size: .9rem; }
+.sd-report-date { color: var(--faint); }
+.sd-report-fu { margin: 10px 0; }
+.sd-report-clarify { font-size: .9rem; margin: 3px 0; line-height: 1.45; }
+.sd-report-clarify--client { color: var(--muted); }
+.sd-report-clarify--learner { color: var(--text); }
+.sd-report-modal { max-width: 820px; }
+.sd-report-modal .results-main { gap: 14px; }
+.trainer-sess__actions { margin-top: 12px; }
