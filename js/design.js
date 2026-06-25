@@ -288,6 +288,7 @@
           S.submitResult = null;
           S.explanation = "";
           S.followAnswers = [];
+          S._workspaceStartMs = 0; S._designElapsedMs = 0; S._sceneJson = null; S._scenePng = null;
           renderWorkspace();
         } else {
           toast("Could not start the session.");
@@ -304,6 +305,7 @@
     var root = appRoot();
     clear(root);
     var sc = S.scenario;
+    if (!S._workspaceStartMs) S._workspaceStartMs = Date.now(); // design-phase start (for delivery-time scoring)
 
     // --- countdown ---
     var countdown = el("span", { class: "sd-countdown", text: fmtClock(S.deadlineAt - Date.now()) });
@@ -331,7 +333,8 @@
     var brief = el("div", { class: "sd-brief-box" }, [
       el("div", { class: "sd-brief-label", text: "Client brief" }),
       el("p", { class: "sd-brief-text", text: sc.clientBrief }),
-      el("p", { class: "sd-brief-hint", text: "Deliberately vague. Ask the client (right) about data, volume, latency, security, and success criteria before you design." })
+      el("p", { class: "sd-brief-hint", text: "Deliberately vague. Ask the client (right) about data, volume, latency, security, and success criteria before you design." }),
+      el("p", { class: "sd-brief-hint", text: "Keep it HIGH-LEVEL — this is ~20 min. Major components, the core workflow, minimal entities, and flag key considerations as you go. You're not expected to detail everything." })
     ]);
 
     // --- canvas ---
@@ -465,6 +468,10 @@
   // SCREEN: spoken explanation (before submit)
   // =====================================================================
   function goExplain() {
+    // Design/scoping phase ends here (the "Done" click). Delivery-time scoring
+    // uses THIS, so the up-to-10-min explanation recording isn't counted against
+    // the 20-min design budget.
+    if (!S._designElapsedMs) S._designElapsedMs = Date.now() - (S._workspaceStartMs || Date.now());
     // capture final scene + png BEFORE tearing down Excalidraw
     var sceneJson = getSceneJson();
     exportPngDataUrl().then(function (png) {
@@ -576,7 +583,8 @@
       sceneJson: S._sceneJson,
       scenePng: S._scenePng,
       explanation: S.explanation,
-      delivery: S.explanationDelivery
+      delivery: S.explanationDelivery,
+      designElapsedMs: S._designElapsedMs || null
     }).then(function (data) {
       if (data && data.ok) { S.submitResult = data; renderFollowupRound(data); }
       else { toast("Scoring failed."); renderTrackSelect(); }
