@@ -618,3 +618,14 @@ html, body {
 .sd-report-modal { max-width: 820px; }
 .sd-report-modal .results-main { gap: 14px; }
 .trainer-sess__actions { margin-top: 12px; }
+
+/* System Design Playbook / guide */
+.sd-guide-table td { padding: 10px 12px; }
+.sd-guide-where { color: var(--muted); }
+.sd-guide-move { padding: 10px 0; border-top: 1px solid var(--line); }
+.sd-guide-move:first-of-type { border-top: none; }
+.sd-guide-move__h { margin: 0 0 4px; font-size: 1rem; }
+.sd-guide-move__b { color: var(--muted); margin: 0; line-height: 1.55; }
+.sd-guide-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+@media (max-width: 680px) { .sd-guide-cols { grid-template-columns: 1fr; } }
+.sd-guide-resources li { margin: 6px 0; }

@@ -264,12 +264,15 @@
 
     if (!cards.length) cards.push(el("p", { class: "empty", text: "No scenarios available for your track yet." }));
 
+    var guideBtn = el("button", { class: "btn", type: "button", text: "📖 Playbook" });
+    guideBtn.addEventListener("click", function () { renderGuide(function () { loadScenarios(S.track); }); });
+
     root.appendChild(el("div", { class: "screen" }, [
       el("div", { class: "sd-head" }, [
         el("h1", { class: "board-title", text: (S.track === "agentic" ? "AI / Agentic" : "Full-Stack") + " Scenarios" }),
-        back
+        el("div", { class: "board-head__actions" }, [guideBtn, back])
       ]),
-      el("p", { class: "sd-note", text: "Pick one. Unlimited practice — only your best each day counts on the board. Completed ones can be redone." }),
+      el("p", { class: "sd-note", text: "New here? Read the Playbook (top-right) for how to spend your time. Unlimited practice — only your best each day counts on the board." }),
       el("div", { class: "sd-scenario-grid" }, cards)
     ]));
   }
@@ -1153,6 +1156,88 @@
   }
 
   // =====================================================================
+  // SCREEN: Playbook / time-allocation guide
+  // =====================================================================
+  function renderGuide(backFn) {
+    cleanup();
+    var root = appRoot();
+    clear(root);
+    var back = el("button", { class: "btn btn--ghost", type: "button", text: "← Back" });
+    back.addEventListener("click", backFn || exit);
+
+    function phaseRow(phase, where, time) {
+      return el("tr", {}, [el("td", { text: phase }), el("td", { class: "sd-guide-where", text: where }), el("td", { class: "num", text: time })]);
+    }
+    var table = el("table", { class: "board-table sd-guide-table" }, [
+      el("thead", {}, [el("tr", {}, [el("th", { text: "Phase" }), el("th", { text: "Where" }), el("th", { class: "num", text: "Target" })])]),
+      el("tbody", {}, [
+        phaseRow("1. Scope the problem", "Clarify-chat", "~5 min"),
+        phaseRow("2. High-level design", "Canvas", "~10 min"),
+        phaseRow("3. Deep-dive hard parts", "Canvas", "~5 min"),
+        phaseRow("4. Explain the WHY", "Spoken", "up to ~10 min"),
+        phaseRow("5. Adapt", "Follow-ups", "~5–10 min")
+      ])
+    ]);
+
+    function move(n, title, body) {
+      return el("div", { class: "sd-guide-move" }, [
+        el("h4", { class: "sd-guide-move__h" }, [el("span", { class: "sd-fu-n", text: n }), el("span", { text: " " + title })]),
+        el("p", { class: "sd-guide-move__b", text: body })
+      ]);
+    }
+
+    function resource(label, url) {
+      return el("li", {}, [el("a", { class: "sd-live__link", href: url, target: "_blank", rel: "noopener", text: label })]);
+    }
+
+    var main = el("div", { class: "results-main" }, [
+      el("div", { class: "card" }, [
+        el("h1", { class: "board-title", text: "System Design Playbook" }),
+        el("p", { class: "sd-sub", text: "The full exercise (scope → design → explain → adapt) runs ~45 min, so time management IS the skill. The design phase is a 20-min budget — high-level and minimal is correct. You're not expected to detail everything; you ARE expected to scope, reason, handle the hard parts, and flag the rest." })
+      ]),
+      el("div", { class: "card" }, [el("h2", { class: "panel-title", text: "How to spend your time" }), table]),
+      el("div", { class: "card" }, [
+        el("h2", { class: "panel-title", text: "The five moves" }),
+        move("1", "Scope first — ask before you draw (~5 min)", "Ask the client about functional features (the 1–3 that matter), non-functional needs (scale, latency, availability, consistency, security), and the numbers (users, req/sec, data size). Asking 2–3 sharp questions before drawing is the win."),
+        move("2", "Name core entities + the interface (~2–3 min)", "A quick bulleted list of key entities and the main operations. Minimal — a first draft, not a schema."),
+        move("3", "High-level design — boxes & arrows (~10 min)", "Major components + the core workflow end-to-end. Keep entities minimal. Talk as you draw — say why each piece is there."),
+        move("4", "Deep-dive the hard parts (~5 min)", "Pick the 1–2 riskiest pieces (bottleneck, failure mode, consistency/scale) and go deeper. Deep dives carry the most weight (~40% of the score). Don't gold-plate the easy parts. Design for failure, not the happy path."),
+        move("5", "Explain & adapt", "For every major choice: why this, what alternative, what it costs. When a constraint changes in the follow-ups, rework live and narrate the tradeoff — composure beats a perfect answer.")
+      ]),
+      el("div", { class: "card sd-guide-cols" }, [
+        el("div", {}, [el("h4", { class: "ov-h is-good", text: "Earns points" }), el("ul", { class: "fb-list" }, [
+          el("li", { text: "Scoped first; named non-functional requirements" }),
+          el("li", { text: "Drove a coherent, high-level design" }),
+          el("li", { text: "Named tradeoffs + an alternative per major choice" }),
+          el("li", { text: "Handled at least one failure / scale concern" }),
+          el("li", { text: "Flagged what you'd detail with more time" })
+        ])]),
+        el("div", {}, [el("h4", { class: "ov-h is-warn", text: "Loses points" }), el("ul", { class: "fb-list" }, [
+          el("li", { text: "Jumped straight to drawing, no scoping" }),
+          el("li", { text: "Happy-path only — no failure modes" }),
+          el("li", { text: "Gold-plated easy parts; rushed the deep dive" }),
+          el("li", { text: "Choices with no WHY" }),
+          el("li", { text: "Tried to detail everything and ran long" })
+        ])])
+      ]),
+      el("div", { class: "card" }, [
+        el("h2", { class: "panel-title", text: "Go deeper" }),
+        el("ul", { class: "fb-list sd-guide-resources" }, [
+          resource("Hello Interview — Delivery Framework (the timings above)", "https://www.hellointerview.com/learn/system-design/in-a-hurry/delivery"),
+          resource("ByteByteGo / Alex Xu — A Framework for System Design Interviews", "https://bytebytego.com/courses/system-design-interview/a-framework-for-system-design-interviews"),
+          resource("Hello Interview — Core Concepts", "https://www.hellointerview.com/learn/system-design/in-a-hurry/core-concepts"),
+          resource("Exponent — System Design Interview Guide", "https://www.tryexponent.com/blog/system-design-interview-guide"),
+          resource("IGotAnOffer — System Design Interviews (FAANG experts)", "https://igotanoffer.com/blogs/tech/system-design-interviews")
+        ])
+      ])
+    ]);
+    root.appendChild(el("div", { class: "screen screen--wide" }, [
+      el("div", { class: "board-head" }, [el("h1", { class: "board-title", text: "Playbook" }), back]),
+      main
+    ]));
+  }
+
+  // =====================================================================
   // Public entry points
   // =====================================================================
   window.DESIGN = {
@@ -1177,6 +1262,11 @@
       S.name = creds.name; S.passcode = creds.passcode; S.tier = creds.tier || null;
       S.onExit = onExit || null;
       renderHistory();
+    },
+    guide: function (creds, onExit) {
+      S.name = creds.name; S.passcode = creds.passcode; S.tier = creds.tier || null;
+      S.onExit = onExit || null;
+      renderGuide(onExit);
     },
     // For trainer.js reuse: build a report DOM node + trigger a PDF.
     buildReportNode: buildReportNode,
