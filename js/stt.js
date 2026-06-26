@@ -32,6 +32,7 @@
     var listening = false;
     var stoppedByUser = false;
     var finalBuffer = ""; // committed transcript so far
+    var lastInterim = ""; // most recent interim (not yet finalized) chunk
 
     function composed(interim) {
       return (finalBuffer + (interim ? " " + interim : "")).trim();
@@ -51,6 +52,9 @@
       if (finalChunk) {
         finalBuffer = (finalBuffer + " " + finalChunk).trim();
       }
+      // Remember the live interim so a stop fired mid-clause (before the engine
+      // emits its isFinal result for the audio tail) doesn't drop those words.
+      lastInterim = interim;
       if (typeof opts.onUpdate === "function") opts.onUpdate(composed(interim));
     };
 
@@ -79,6 +83,7 @@
         if (listening) return;
         stoppedByUser = false;
         finalBuffer = "";
+        lastInterim = "";
         listening = true;
         try {
           rec.start();
@@ -100,9 +105,10 @@
       isListening: function () {
         return listening;
       },
-      // Final buffered transcript (committed text only — interim is dropped on stop).
+      // Buffered transcript including any live interim chunk, so a stop fired
+      // immediately after speaking still captures the last (not-yet-finalized) clause.
       getTranscript: function () {
-        return finalBuffer.trim();
+        return composed(lastInterim);
       }
     };
   }
